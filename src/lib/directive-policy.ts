@@ -1,0 +1,685 @@
+// ============================================================================
+// OptimizationPolicy — Single Source of Truth for all optimization behavior
+//
+// This file defines the OptimizationPolicy type and the buildOptimizationPolicy
+// function that derives it from the store state (OptimizerDirectiveConfig).
+//
+// The policy is injected into EVERY agent as "SYSTEM POLICY:" at the top of
+// their system prompt. Agents cannot override it. QA validates against it.
+// ============================================================================
+
+"use client";
+
+import type { OptimizerDirectiveConfig, ResumeData } from "./types";
+
+// ============================================================================
+// OPTIMIZATION POLICY TYPE
+// ============================================================================
+
+export interface OptimizationPolicy {
+  version: string;
+
+  // === LAYOUT ===
+  pageLimit: "one-page" | "two-page" | "auto";
+  layoutTemplate: "preserve-original" | "modern" | "professional";
+  fontSize: number;
+  lineHeight: number;
+
+  // === SUMMARY ===
+  summaryLength: "short" | "medium" | "comprehensive";
+  summaryMinWords: number;
+  summaryMaxWords: number;
+
+  // === OPTIMIZATION LEVEL ===
+  optimizationLevel: "conservative" | "balanced" | "aggressive";
+
+  // === KEYWORDS ===
+  keywordStrategy: "minimal" | "balanced" | "ats-heavy";
+
+  // === SKILLS ===
+  skillsStrategy: "real-skills-only" | "enrich-with-keywords";
+
+  // === EXPERIENCE ===
+  experienceStrategy: "bullet-only" | "bullet-and-title" | "full-rewrite";
+
+  // === IMMUTABLE ENTITY FLAGS ===
+  preserveCompanies: boolean;
+  preserveDates: boolean;
+  preserveEducation: boolean;
+  preserveLanguages: boolean;
+  preserveCertifications: boolean;
+  preserveContact: boolean;
+
+  // === FORBIDDEN BEHAVIORS ===
+  forbidKeywordDumping: boolean;
+  forbidTargetedKeywordsSection: boolean;
+  forbidFakeSkills: boolean;
+  forbidSectionReorder: boolean;
+  forbidSectionAddRemove: boolean;
+
+  // === HALLUCINATION GUARD ===
+  hallucinationPolicy: "strict" | "lenient" | "off";
+
+  // === SUPERVISOR CONTROLS ===
+  supervisorStrictMode: boolean;
+  supervisorEnableRetries: boolean;
+  supervisorEnableProviderSwitch: boolean;
+
+  // === FORMATTING ===
+  formattingRules: {
+    experienceHeader: string;   // "<Role> | <Company> | <Date>"
+    educationHeader: string;    // "<Diploma> | <School> | <Date>"
+    bulletPrefix: string;       // "• " or ""
+    dateFormat: string;         // "Mon YYYY" or "MM/YYYY"
+    emptyCompanyFormat: string; // "omit-line" or "blank"
+  };
+
+  // === ATS ===
+  // ATS
+  atsStrategy: "minimal" | "balanced" | "ats-heavy";
+
+  // === CHARACTER LIMITS ===
+  maxTotalChars: number;
+  minTotalChars: number;
+
+  // === SECTION OWNERSHIP MAP ===
+  // Maps each resume section to the agent that owns it
+  sectionOwnership: Record<string, string>;
+
+  // === TARGET ATS SYSTEM ===
+  targetAtsSystem?: string;
+
+  // === HEADLINE ===
+  headlineStrategy?: "exact-title-match" | "seniority-adjusted" | "jd-aligned" | "preserve";
+
+  // === TONE & WRITING STYLE ===
+  toneVoice?: string;                  // e.g. "confident"
+  bulletTense?: string;                // "past-tense" | "present-tense" | "auto"
+  forbidPassiveVoice?: boolean;
+  enforcePowerVerbs?: boolean;
+  avoidFillerPhrases?: boolean;
+  requireQuantification?: boolean;
+  experienceFormula?: "auto" | "star" | "xyz";
+
+  // === CUSTOM KEYWORDS ===
+  forbiddenKeywords?: string[];        // must never appear in output
+  requiredKeywords?: string[];         // must appear at least once
+  keywordPlacement?: string;           // "summary-first" | "skills-first" | "spread-evenly"
+
+  // === SECTION ORDER ===
+  sectionOrder?: string[];
+
+  // === DATE STANDARDIZATION ===
+  dateFormat?: "auto" | "month-year" | "short-date" | "year-only";
+
+  // === CONTACT BLOCK LAYOUT ===
+  contactSpacing?: "stacked" | "single-line";
+
+  // === CUSTOM SECTION INSTRUCTIONS ===
+  customSectionInstructions?: Record<string, string>;
+}
+
+// ============================================================================
+// POLICY BUILDER
+// ============================================================================
+
+const POLICY_VERSION = "1.0";
+
+/**
+ * Translate an atsAggressiveness number (0-100) to a keyword strategy label.
+ */
+function computeKeywordStrategy(atsAggressiveness: number): OptimizationPolicy["keywordStrategy"] {
+  if (atsAggressiveness < 33) return "minimal";
+  if (atsAggressiveness < 66) return "balanced";
+  return "ats-heavy";
+}
+
+/**
+ * Map atsAggressiveness to optimization level.
+ */
+function computeOptimizationLevel(atsAggressiveness: number): OptimizationPolicy["optimizationLevel"] {
+  if (atsAggressiveness < 33) return "conservative";
+  if (atsAggressiveness < 66) return "balanced";
+  return "aggressive";
+}
+
+/**
+ * Map summary minChars/maxChars to a summary length label.
+ */
+function computeSummaryLength(minChars: number, maxChars: number): OptimizationPolicy["summaryLength"] {
+  const avgChar = (minChars + maxChars) / 2;
+  if (avgChar < 600) return "short";
+  if (avgChar < 1200) return "medium";
+  return "comprehensive";
+}
+
+/**
+ * Build the default section ownership map.
+ */
+function buildSectionOwnership(): Record<string, string> {
+  return {
+    summary: "summary-agent",
+    skills: "skills-agent",
+    experience: "experience-agent",
+    education: "education-agent",
+    languages: "languages-agent",
+    certifications: "languages-agent",
+    projects: "additional-information-agent",
+  };
+}
+
+/**
+ * Derive OptimizationPolicy from the store's OptimizerDirectiveConfig.
+ *
+ * This is the key function that bridges UI state → policy →
+ * agent prompts. It reads ALL directive knobs and produces a
+ * single, flat policy object that agents cannot override.
+ */
+export function buildOptimizationPolicy(
+  directiveConfig: OptimizerDirectiveConfig | null | undefined,
+  sourceResume?: ResumeData,
+): OptimizationPolicy {
+  const agentDirs = directiveConfig?.agentDirectives;
+
+  const atsAggressiveness = agentDirs?.summary?.atsAggressiveness ?? 50;
+
+  return {
+    version: POLICY_VERSION,
+
+    // Layout
+    pageLimit: directiveConfig?.enforceOnePage ? "one-page" : "auto",
+    layoutTemplate: "preserve-original",
+    fontSize: directiveConfig?.bodyFontSizePt ?? 10.5,
+    lineHeight: directiveConfig?.lineHeight ?? 1.2,
+
+    // Summary
+    summaryLength: computeSummaryLength(
+      directiveConfig?.summaryMinWords ?? 300,
+      directiveConfig?.summaryMaxWords ?? 800,
+    ),
+    summaryMinWords: directiveConfig?.summaryMinWords ?? 60,
+    summaryMaxWords: directiveConfig?.summaryMaxWords ?? 130,
+
+    // Optimization
+    optimizationLevel: computeOptimizationLevel(atsAggressiveness),
+    keywordStrategy: computeKeywordStrategy(atsAggressiveness),
+    skillsStrategy: agentDirs?.skills?.allowCompanyKeywords ? "enrich-with-keywords" : "real-skills-only",
+    experienceStrategy: "bullet-only",
+
+    // Immutable entities
+    preserveCompanies: agentDirs?.experience?.rewriteCompany !== true,
+    preserveDates: agentDirs?.experience?.rewriteDates !== true,
+    preserveEducation: true,
+    preserveLanguages: true,
+    preserveCertifications: true,
+    preserveContact: true,
+
+    // Forbidden behaviors
+    forbidKeywordDumping: true,
+    forbidTargetedKeywordsSection: true,
+    forbidFakeSkills: true,
+    forbidSectionReorder: true,
+    forbidSectionAddRemove: true,
+
+    // Hallucination guard
+    hallucinationPolicy: "strict",
+
+    // Supervisor controls
+    supervisorStrictMode: agentDirs?.supervisor?.strictMode ?? true,
+    supervisorEnableRetries: agentDirs?.supervisor?.enableRetries ?? true,
+    supervisorEnableProviderSwitch: agentDirs?.supervisor?.enableProviderSwitch ?? false,
+
+    // Formatting
+    formattingRules: {
+      experienceHeader: "<Role> | <Company> | <Date>",
+      educationHeader: "<Diploma> | <School> | <Date>",
+      bulletPrefix: "",
+      dateFormat: "Mon YYYY",
+      emptyCompanyFormat: "omit-line",
+    },
+
+    // ATS
+    atsStrategy: computeKeywordStrategy(atsAggressiveness),
+
+    // Character limits
+    minTotalChars: 2500,
+    maxTotalChars: 3800,
+
+    // Section ownership
+    sectionOwnership: buildSectionOwnership(),
+
+    // Target ATS system
+    targetAtsSystem: directiveConfig?.targetAtsSystem ?? "generic",
+
+    // Headline
+    headlineStrategy: directiveConfig?.agentDirectives?.headline?.headlineTone ?? "preserve",
+
+    // Tone & writing style
+    toneVoice: directiveConfig?.toneConfig?.tone ?? "confident",
+    bulletTense: directiveConfig?.toneConfig?.bulletVerbTense ?? "past-tense",
+    forbidPassiveVoice: directiveConfig?.toneConfig?.avoidPassiveVoice ?? true,
+    enforcePowerVerbs: directiveConfig?.toneConfig?.enforcePowerVerbs ?? true,
+    avoidFillerPhrases: directiveConfig?.toneConfig?.avoidFillerPhrases ?? true,
+    requireQuantification: directiveConfig?.toneConfig?.requireQuantification ?? false,
+    experienceFormula: directiveConfig?.toneConfig?.experienceFormula ?? "auto",
+
+    // Custom keywords
+    forbiddenKeywords: directiveConfig?.customKeywords?.forbiddenKeywords ?? [],
+    requiredKeywords: directiveConfig?.customKeywords?.requiredKeywords ?? [],
+    keywordPlacement: directiveConfig?.customKeywords?.keywordPlacement ?? "spread-evenly",
+
+    // Section order
+    sectionOrder: directiveConfig?.sectionOrder ?? ["summary", "experience", "education", "skills", "languages", "projects", "certifications", "additionalInfo"],
+
+    // Date standardization
+    dateFormat: directiveConfig?.dateFormat ?? "auto",
+
+    // Contact block layout
+    contactSpacing: directiveConfig?.contactSpacing ?? "stacked",
+
+    // Custom section instructions
+    customSectionInstructions: directiveConfig?.customSectionInstructions ?? {},
+  };
+}
+
+// ============================================================================
+// POLICY SERIALIZATION
+// ============================================================================
+
+/**
+ * Format the policy as a human-readable section for injection into LLM prompts.
+ * Each agent prompt must begin with this section.
+ */
+export function formatPolicyForPrompt(policy: OptimizationPolicy): string {
+  const lines: string[] = [];
+  lines.push("=== SYSTEM POLICY ===");
+  lines.push(`Version: ${policy.version}`);
+  lines.push(`Page Limit: ${policy.pageLimit}`);
+  lines.push(`Layout Template: ${policy.layoutTemplate}`);
+  lines.push(`Font Size: ${policy.fontSize}pt, Line Height: ${policy.lineHeight}`);
+  lines.push(`Summary Length: ${policy.summaryLength} (${policy.summaryMinWords}-${policy.summaryMaxWords} words)`);
+  lines.push(`Optimization Level: ${policy.optimizationLevel}`);
+  lines.push(`Keyword Strategy: ${policy.keywordStrategy}`);
+  lines.push(`Skills Strategy: ${policy.skillsStrategy}`);
+  lines.push(`Experience Strategy: ${policy.experienceStrategy}`);
+
+  // Immutable entities
+  const immutables: string[] = [];
+  if (policy.preserveCompanies) immutables.push("Companies");
+  if (policy.preserveDates) immutables.push("Dates");
+  if (policy.preserveEducation) immutables.push("Education");
+  if (policy.preserveLanguages) immutables.push("Languages");
+  if (policy.preserveCertifications) immutables.push("Certifications");
+  if (policy.preserveContact) immutables.push("Contact Info");
+  lines.push(`Immutable Entities (DO NOT MODIFY): ${immutables.join(", ") || "None"}`);
+
+  // Forbidden behaviors
+  const forbidden: string[] = [];
+  if (policy.forbidKeywordDumping) forbidden.push("Keyword dumping");
+  if (policy.forbidTargetedKeywordsSection) forbidden.push("'Targeted Keywords' section");
+  if (policy.forbidFakeSkills) forbidden.push("Fake or hallucinated skills");
+  if (policy.forbidSectionReorder) forbidden.push("Reordering sections");
+  if (policy.forbidSectionAddRemove) forbidden.push("Adding or removing sections");
+  lines.push(`Forbidden: ${forbidden.join(", ") || "None"}`);
+
+  lines.push(`Hallucination Policy: ${policy.hallucinationPolicy}`);
+  lines.push(`ATS Strategy: ${policy.atsStrategy}`);
+  lines.push(`Character Target: ${policy.minTotalChars}-${policy.maxTotalChars} total`);
+
+  // Formatting
+  lines.push(`Formatting: Experience="${policy.formattingRules.experienceHeader}", Education="${policy.formattingRules.educationHeader}"`);
+
+  // Section ownership
+  lines.push("Section Ownership (single-agent per section):");
+  for (const [section, agent] of Object.entries(policy.sectionOwnership)) {
+    lines.push(`  - ${section}: ${agent}`);
+  }
+
+  // Tone & writing style
+  lines.push(`Tone Voice: ${policy.toneVoice}`);
+  lines.push(`Bullet Verb Tense: ${policy.bulletTense}`);
+  const writingRules: string[] = [];
+  if (policy.avoidFillerPhrases) writingRules.push("No filler phrases (e.g. 'responsible for', 'helped with')");
+  if (policy.enforcePowerVerbs) writingRules.push("All bullets must start with a strong action verb");
+  if (policy.requireQuantification) writingRules.push("Include at least one quantified metric per experience entry");
+  if (policy.forbidPassiveVoice) writingRules.push("No passive voice");
+  if (writingRules.length > 0) lines.push(`Writing Rules: ${writingRules.join("; ")}`);
+
+  // Target ATS system
+  if (policy.targetAtsSystem && policy.targetAtsSystem !== "generic") {
+    lines.push(`Target ATS: ${policy.targetAtsSystem.toUpperCase()} — optimize parsing compatibility for this platform`);
+  }
+
+  // Headline strategy
+  if (policy.headlineStrategy && policy.headlineStrategy !== "preserve") {
+    lines.push(`Headline Strategy: ${policy.headlineStrategy}`);
+  }
+
+  // Custom forbidden keywords
+  if (policy.forbiddenKeywords && policy.forbiddenKeywords.length > 0) {
+    lines.push(`FORBIDDEN KEYWORDS (never use these): ${policy.forbiddenKeywords.join(", ")}`);
+  }
+
+  // Custom required keywords
+  if (policy.requiredKeywords && policy.requiredKeywords.length > 0) {
+    lines.push(`REQUIRED KEYWORDS (must appear at least once): ${policy.requiredKeywords.join(", ")}`);
+  }
+
+  // Keyword placement preference
+  if (policy.keywordPlacement && policy.keywordPlacement !== "spread-evenly") {
+    lines.push(`Keyword Placement Priority: ${policy.keywordPlacement}`);
+  }
+
+  // Structured experience bullet formula
+  if (policy.experienceFormula && policy.experienceFormula !== "auto") {
+    lines.push(`Experience Bullet Formula: Enforce the ${policy.experienceFormula.toUpperCase()} formula for all rewritten bullet points.`);
+  }
+
+  // Section order rule
+  if (policy.sectionOrder && policy.sectionOrder.length > 0) {
+    lines.push(`Required Section Order: Output sections in the following order: ${policy.sectionOrder.join(", ")}`);
+  }
+
+  // Date format rule
+  if (policy.dateFormat && policy.dateFormat !== "auto") {
+    lines.push(`Standard Date Format: Enforce the '${policy.dateFormat}' format for all dates in experience and education (e.g. Month Year or MM/YYYY).`);
+  }
+
+  // Contact layout rule
+  if (policy.contactSpacing) {
+    lines.push(`Contact Block Style: ${policy.contactSpacing === "single-line" ? "Single-Line inline divider" : "Stacked multi-line layout"}`);
+  }
+
+  // Custom section-level instructions
+  if (policy.customSectionInstructions && Object.keys(policy.customSectionInstructions).length > 0) {
+    lines.push("Custom Section-Level Instructions:");
+    for (const [sec, inst] of Object.entries(policy.customSectionInstructions)) {
+      if (inst && inst.trim()) {
+        lines.push(`  - ${sec}: ${inst.trim()}`);
+      }
+    }
+  }
+
+  lines.push("=== END SYSTEM POLICY ===");
+
+  return lines.join("\n");
+}
+
+// ============================================================================
+// POLICY COMPLIANCE CHECKER
+// ============================================================================
+
+export interface ComplianceCheck {
+  check: string;
+  passed: boolean;
+  detail?: string;
+}
+
+/**
+ * Check a resume against the policy and return compliance results.
+ * Used by QA and the supervisor to validate agent outputs.
+ */
+export function checkPolicyCompliance(
+  resume: ResumeData,
+  sourceResume: ResumeData | null,
+  policy: OptimizationPolicy,
+): { complianceScore: number; checks: ComplianceCheck[] } {
+  const checks: ComplianceCheck[] = [];
+  let passedCount = 0;
+  let totalChecks = 0;
+
+  // 1. Companies preserved
+  totalChecks++;
+  if (policy.preserveCompanies && sourceResume) {
+    const srcCompanies = sourceResume.experience.map((e) => (e.company || "").toLowerCase().trim()).filter(Boolean);
+    const optCompanies = resume.experience.map((e) => (e.company || "").toLowerCase().trim()).filter(Boolean);
+    const allPreserved = srcCompanies.every((c) => optCompanies.some((oc) => oc.includes(c) || c.includes(oc)));
+    if (allPreserved) {
+      checks.push({ check: "companies_preserved", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "companies_preserved",
+        passed: false,
+        detail: `Source companies: [${srcCompanies.join(", ")}], Found: [${optCompanies.join(", ")}]`,
+      });
+    }
+  } else {
+    checks.push({ check: "companies_preserved", passed: true, detail: "Skipped (not enforced)" });
+    passedCount++;
+  }
+
+  // 2. Dates preserved
+  totalChecks++;
+  if (policy.preserveDates && sourceResume) {
+    const srcDates = sourceResume.experience.map((e) => `${e.startDate || ""}-${e.endDate || ""}`);
+    const optDates = resume.experience.map((e) => `${e.startDate || ""}-${e.endDate || ""}`);
+    const allPreserved = srcDates.every((d) => optDates.includes(d));
+    if (allPreserved) {
+      checks.push({ check: "dates_preserved", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "dates_preserved",
+        passed: false,
+        detail: "Experience dates differ between source and optimized",
+      });
+    }
+  } else {
+    checks.push({ check: "dates_preserved", passed: true, detail: "Skipped (not enforced)" });
+    passedCount++;
+  }
+
+  // 3. Education preserved
+  totalChecks++;
+  if (policy.preserveEducation && sourceResume) {
+    const srcEduCount = sourceResume.education.length;
+    const optEduCount = resume.education.length;
+    if (srcEduCount === optEduCount) {
+      checks.push({ check: "education_preserved", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "education_preserved",
+        passed: false,
+        detail: `Source had ${srcEduCount} entries, optimized has ${optEduCount}`,
+      });
+    }
+  } else {
+    checks.push({ check: "education_preserved", passed: true, detail: "Skipped (not enforced)" });
+    passedCount++;
+  }
+
+  // 4. Languages preserved
+  totalChecks++;
+  if (policy.preserveLanguages && sourceResume) {
+    const srcLangCount = sourceResume.languages.length;
+    const optLangCount = resume.languages.length;
+    if (srcLangCount === optLangCount) {
+      checks.push({ check: "languages_preserved", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "languages_preserved",
+        passed: false,
+        detail: `Source had ${srcLangCount} entries, optimized has ${optLangCount}`,
+      });
+    }
+  } else {
+    checks.push({ check: "languages_preserved", passed: true, detail: "Skipped (not enforced)" });
+    passedCount++;
+  }
+
+  // 5. Summary length
+  totalChecks++;
+  if (resume.summary) {
+    const wordCount = resume.summary.trim().split(/\s+/).length;
+    if (wordCount >= policy.summaryMinWords && wordCount <= policy.summaryMaxWords) {
+      checks.push({ check: "summary_length", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "summary_length",
+        passed: false,
+        detail: `Summary is ${wordCount} words, policy requires ${policy.summaryMinWords}-${policy.summaryMaxWords}`,
+      });
+    }
+  } else {
+    checks.push({ check: "summary_length", passed: false, detail: "Summary is empty" });
+  }
+
+  // 6. No targeted keywords section
+  totalChecks++;
+  const hasForbiddenSection = resume.skills.some(
+    (s) => (s.name || "").toLowerCase().includes("targeted keyword") || (s.category || "").toLowerCase().includes("targeted keyword"),
+  );
+  if (!hasForbiddenSection) {
+    checks.push({ check: "no_targeted_keywords_section", passed: true });
+    passedCount++;
+  } else {
+    checks.push({ check: "no_targeted_keywords_section", passed: false, detail: "Skills section contains 'Targeted Keywords'" });
+  }
+
+  // 7. Experience count preserved
+  totalChecks++;
+  if (sourceResume) {
+    const expCountMatch = resume.experience.length >= sourceResume.experience.length;
+    if (expCountMatch) {
+      checks.push({ check: "experience_count_preserved", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "experience_count_preserved",
+        passed: false,
+        detail: `Source had ${sourceResume.experience.length} experiences, optimized has ${resume.experience.length}`,
+      });
+    }
+  } else {
+    checks.push({ check: "experience_count_preserved", passed: true, detail: "Skipped (no source)" });
+    passedCount++;
+  }
+
+  // 8. Character range
+  totalChecks++;
+  const charCount = JSON.stringify(resume).length;
+  if (charCount >= policy.minTotalChars && charCount <= policy.maxTotalChars) {
+    checks.push({ check: "character_range", passed: true });
+    passedCount++;
+  } else {
+    checks.push({
+      check: "character_range",
+      passed: false,
+      detail: `Resume is ${charCount} chars, policy requires ${policy.minTotalChars}-${policy.maxTotalChars}`,
+    });
+  }
+
+  // 9. Experience strategy enforced (bullet-only)
+  totalChecks++;
+  if (policy.experienceStrategy === "bullet-only" && sourceResume) {
+    // Verify companies and titles match source (not rewritten)
+    const srcExpBasic = sourceResume.experience.map((e) => `${e.title}|${e.company}|${e.startDate}|${e.endDate}`);
+    const optExpBasic = resume.experience.map((e) => `${e.title}|${e.company}|${e.startDate}|${e.endDate}`);
+    const allMatch = srcExpBasic.every((s) => optExpBasic.includes(s));
+    if (allMatch) {
+      checks.push({ check: "bullet_only_compliance", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "bullet_only_compliance",
+        passed: false,
+        detail: "Some experience headers (title/company/dates) differ between source and optimized",
+      });
+    }
+  } else {
+    checks.push({ check: "bullet_only_compliance", passed: true, detail: "Skipped (not enforced)" });
+    passedCount++;
+  }
+
+  // 10. Required keywords check
+  if (policy.requiredKeywords && policy.requiredKeywords.length > 0) {
+    totalChecks++;
+    const serializedText = serializeResumeText(resume);
+    const missing: string[] = [];
+    for (const kw of policy.requiredKeywords) {
+      if (!serializedText.includes(kw.toLowerCase())) {
+        missing.push(kw);
+      }
+    }
+    if (missing.length === 0) {
+      checks.push({ check: "required_keywords_check", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "required_keywords_check",
+        passed: false,
+        detail: `Missing required keywords: [${missing.join(", ")}]`,
+      });
+    }
+  }
+
+  // 11. Forbidden keywords check
+  if (policy.forbiddenKeywords && policy.forbiddenKeywords.length > 0) {
+    totalChecks++;
+    const serializedText = serializeResumeText(resume);
+    const found: string[] = [];
+    for (const kw of policy.forbiddenKeywords) {
+      if (serializedText.includes(kw.toLowerCase())) {
+        found.push(kw);
+      }
+    }
+    if (found.length === 0) {
+      checks.push({ check: "forbidden_keywords_check", passed: true });
+      passedCount++;
+    } else {
+      checks.push({
+        check: "forbidden_keywords_check",
+        passed: false,
+        detail: `Found forbidden keywords: [${found.join(", ")}]`,
+      });
+    }
+  }
+
+  // Compute score
+  const complianceScore = totalChecks > 0 ? Math.round((passedCount / totalChecks) * 100) : 100;
+
+  return { complianceScore, checks };
+}
+
+function serializeResumeText(resume: ResumeData): string {
+  const parts: string[] = [];
+  if (resume.name) parts.push(resume.name);
+  if (resume.headline) parts.push(resume.headline);
+  if (resume.summary) parts.push(resume.summary);
+  if (resume.skills) {
+    for (const s of resume.skills) {
+      if (s.name) parts.push(s.name);
+      if (s.category) parts.push(s.category);
+    }
+  }
+  if (resume.experience) {
+    for (const e of resume.experience) {
+      if (e.title) parts.push(e.title);
+      if (e.company) parts.push(e.company);
+      if (e.bullets) parts.push(...e.bullets);
+    }
+  }
+  if (resume.education) {
+    for (const ed of resume.education) {
+      if (ed.degree) parts.push(ed.degree);
+      if (ed.institution) parts.push(ed.institution);
+    }
+  }
+  if (resume.certifications) {
+    for (const c of resume.certifications) {
+      if (c.name) parts.push(c.name);
+      if (c.issuer) parts.push(c.issuer);
+    }
+  }
+  if (resume.projects) {
+    for (const p of resume.projects) {
+      if (p.name) parts.push(p.name);
+      if (p.bullets) parts.push(...p.bullets);
+    }
+  }
+  return parts.join(" ").toLowerCase();
+}

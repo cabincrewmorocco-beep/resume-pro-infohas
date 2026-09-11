@@ -1,0 +1,239 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Badge, Icon } from "@/components/shared";
+import { ProviderManager } from "@/lib/ai/services";
+import type { AIProvider } from "@/lib/types";
+
+interface TestResult {
+  ok: boolean;
+  latencyMs: number;
+  message: string;
+  response?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** HTTP 429 — provider reachable + key accepted, but rate/quota limited */
+  rateLimited?: boolean;
+}
+
+export function TestConnectionModal({ provider, onClose }: { provider: AIProvider; onClose: () => void }) {
+  const [status, setStatus] = useState<"idle" | "running" | "done">("idle");
+  const [result, setResult] = useState<TestResult | null>(null);
+  const [testPrompt, setTestPrompt] = useState("Reply with exactly: OK");
+  const [steps, setSteps] = useState<string[]>([]);
+
+  const runTest = async () => {
+    setStatus("running");
+    setSteps([]);
+    setResult(null);
+
+    setSteps((s) => [...s, `Resolving adapter for type "${provider.type}"…`]);
+    await new Promise((r) => setTimeout(r, 200));
+    setSteps((s) => [...s, `Building config (baseUrl=${provider.baseUrl || provider.apiUrl || "—"}, model=${provider.modelName || "—"})…`]);
+    await new Promise((r) => setTimeout(r, 200));
+    setSteps((s) => [...s, `Sending test prompt: "${testPrompt.slice(0, 60)}${testPrompt.length > 60 ? "…" : ""}"`]);
+
+    const t0 = performance.now();
+    const res = await ProviderManager.testConnection(provider);
+    const totalMs = Math.round(performance.now() - t0);
+
+    setSteps((s) => [...s, `Received response in ${res.latencyMs}ms (total ${totalMs}ms including overhead).`]);
+    setResult(res);
+    setStatus("done");
+  };
+
+  const hasAlternateKeys = (provider.alternateApiKeys || []).length > 0;
+
+  const runTestWithRotation = async () => {
+    setStatus("running");
+    setSteps([]);
+    setResult(null);
+
+    setSteps((s) => [...s, `Testing primary key: ${provider.apiKey ? `${provider.apiKey.slice(0, 8)}…` : "(empty)"}`]);
+    const res = await ProviderManager.testConnection(provider);
+    if (res.ok) {
+      setSteps((s) => [...s, `Primary key succeeded in ${res.latencyMs}ms.`]);
+      setResult(res);
+      setStatus("done");
+      return;
+    }
+
+    setSteps((s) => [...s, `Primary key returned: ${res.message}`]);
+    const altKeys = provider.alternateApiKeys || [];
+    if (altKeys.length === 0) {
+      setSteps((s) => [...s, "No alternate keys configured to rotate to."]);
+      setResult(res);
+      setStatus("done");
+      return;
+    }
+
+    setSteps((s) => [...s, `Triggering rotation simulation: trying ${altKeys.length} alternate key(s)...`]);
+    let rotatedSuccess = false;
+    for (let i = 0; i < altKeys.length; i++) {
+      const altKey = altKeys[i];
+      setSteps((s) => [...s, `Testing Alternate Key #${i + 1}: ${altKey.slice(0, 8)}…`]);
+      const altRes = await ProviderManager.testConnection({ ...provider, apiKey: altKey });
+      if (altRes.ok) {
+        setSteps((s) => [...s, `✓ Alternate Key #${i + 1} succeeded in ${altRes.latencyMs}ms! Rotation is operational.`]);
+        setResult({
+          ok: true,
+          latencyMs: altRes.latencyMs,
+          message: `Rotation verified: Primary key failed (${res.message}), but Alternate Key #${i + 1} succeeded!`,
+          response: altRes.response,
+        });
+        rotatedSuccess = true;
+        break;
+      } else {
+        setSteps((s) => [...s, `✗ Alternate Key #${i + 1} failed: ${altRes.message}`]);
+      }
+    }
+    if (!rotatedSuccess) {
+      setResult(res);
+    }
+    setStatus("done");
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0, scale: 0.97 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.97 }}
+        transition={{ type: "spring", damping: 26, stiffness: 280 }}
+        className="bg-card rounded-2xl border border-border shadow-premium w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-card border-b border-border p-4 flex items-center justify-between">
+          <h3 className="font-display font-bold text-lg flex items-center gap-2">
+            <Icon name="Zap" className="w-5 h-5 text-gold" />
+            Test Connection — {provider.name}
+          </h3>
+          <Button variant="ghost" size="icon" onClick={onClose}><Icon name="X" className="w-4 h-4" /></Button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Demoted provider banner (Task 17) — set expectations before the user reads a 429 verdict */}
+          {provider.isActive === false && (
+            <div className="rounded-lg bg-amber-100 dark:bg-amber-400/10 border border-amber-300 p-3 text-xs text-amber-800 dark:text-amber-300 flex gap-2">
+              <Icon name="PauseCircle" className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                This provider is <strong>demoted</strong> (isActive = 0) — it is excluded from the live routing chain, so normal chats never send it traffic. Diagnostics still run so you can inspect its raw upstream response. Note: its free-tier quota is per-IP on shared egress infrastructure, so a &quot;Rate-limited&quot; verdict here does not mean you exhausted it yourself.
+              </span>
+            </div>
+          )}
+
+          {/* Provider summary */}
+          <div className="rounded-lg bg-secondary/50 p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <div><div className="text-muted-foreground">Type</div><div className="font-medium capitalize">{provider.type.replace("-", " ")}</div></div>
+            <div><div className="text-muted-foreground">Model</div><div className="font-medium font-mono truncate">{provider.modelName || "—"}</div></div>
+            <div><div className="text-muted-foreground">Base URL</div><div className="font-mono truncate">{provider.baseUrl || provider.apiUrl || "—"}</div></div>
+            <div><div className="text-muted-foreground">Timeout</div><div className="font-medium">{provider.timeout}ms</div></div>
+          </div>
+
+          {/* Test prompt editor */}
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wide text-muted-foreground">Test prompt</label>
+            <input
+              value={testPrompt}
+              onChange={(e) => setTestPrompt(e.target.value)}
+              disabled={status === "running"}
+              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm disabled:opacity-50"
+            />
+          </div>
+
+          {/* Run button */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button
+              onClick={runTest}
+              disabled={status === "running"}
+              className="flex-1 bg-brand hover:bg-brand-dark text-white gap-2"
+            >
+              {status === "running" ? (
+                <><Icon name="Loader2" className="w-4 h-4 animate-spin" /> Running test…</>
+              ) : (
+                <><Icon name="Play" className="w-4 h-4" /> Run test connection</>
+              )}
+            </Button>
+            {hasAlternateKeys && (
+              <Button
+                onClick={runTestWithRotation}
+                disabled={status === "running"}
+                variant="outline"
+                className="gap-2 border-brand/40 hover:bg-brand/10 text-brand dark:text-brand-light"
+              >
+                <Icon name="RotateCw" className="w-4 h-4" />
+                Test With Key Rotation ({(provider.alternateApiKeys || []).length} alts)
+              </Button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            {hasAlternateKeys ? (
+              <span>
+                <strong>{(provider.alternateApiKeys || []).length} alternate API key(s) configured.</strong> During live chat or resume generation, if the primary key hits HTTP 429 or quota limits, the router automatically fails over to the alternate keys in sequence and swaps the winning key into the primary slot. Use &quot;Test With Key Rotation&quot; above to simulate and verify this failover.
+              </span>
+            ) : (
+              <span>
+                This test sends a single raw request with exactly this provider&apos;s key, model and base URL — no retries or rotation — so you see the provider&apos;s true response. Regular chats go through the rotator: on 429 they retry, rotate alternate keys/models, and fail over to your fallback providers.
+              </span>
+            )}
+          </p>
+
+          {/* Steps log */}
+          {steps.length > 0 && (
+            <div className="rounded-lg bg-slate-900 text-slate-100 p-3 font-mono text-xs space-y-1 max-h-40 overflow-y-auto">
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="text-emerald-400">›</span>
+                  <span>{s}</span>
+                </div>
+              ))}
+              {status === "running" && <div className="flex items-center gap-2 text-amber-300"><span className="animate-pulse">●</span> Awaiting response…</div>}
+            </div>
+          )}
+
+          {/* Result — ok = green, rateLimited = amber (reachable but quota/rate limited), else red */}
+          {status === "done" && result && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+              <div className={`rounded-lg p-4 ${result.ok ? "bg-emerald-100 dark:bg-emerald-400/10 border border-emerald-300" : result.rateLimited ? "bg-amber-100 dark:bg-amber-400/10 border border-amber-300" : "bg-red-100 dark:bg-red-400/10 border border-red-300"}`}>
+                <div className="flex items-center gap-2">
+                  <Icon name={result.ok ? "CheckCircle2" : result.rateLimited ? "AlertTriangle" : "XCircle"} className={`w-5 h-5 ${result.ok ? "text-emerald-600" : result.rateLimited ? "text-amber-600" : "text-red-600"}`} />
+                  <span className={`font-semibold ${result.ok ? "text-emerald-800 dark:text-emerald-300" : result.rateLimited ? "text-amber-800 dark:text-amber-300" : "text-red-800 dark:text-red-300"}`}>
+                    {result.ok ? "Connection successful" : result.rateLimited ? "Rate-limited — provider reachable" : "Connection failed"}
+                  </span>
+                  <Badge variant={result.ok ? "success" : result.rateLimited ? "warning" : "danger"} className="ml-auto">{result.latencyMs}ms</Badge>
+                </div>
+                <div className={`mt-2 text-sm ${result.ok ? "text-emerald-700 dark:text-emerald-400" : result.rateLimited ? "text-amber-700 dark:text-amber-400" : "text-red-700 dark:text-red-400"}`}>{result.message}</div>
+              </div>
+
+              {result.response && (
+                <div>
+                  <div className="text-xs font-semibold uppercase text-muted-foreground mb-1">Response</div>
+                  <pre className="rounded-lg border border-border bg-secondary/50 p-3 text-xs font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">{result.response}</pre>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded-md bg-secondary p-2"><div className="text-muted-foreground">Latency</div><div className="font-mono font-semibold">{result.latencyMs}ms</div></div>
+                <div className="rounded-md bg-secondary p-2"><div className="text-muted-foreground">Input tokens</div><div className="font-mono font-semibold">{result.inputTokens ?? "—"}</div></div>
+                <div className="rounded-md bg-secondary p-2"><div className="text-muted-foreground">Output tokens</div><div className="font-mono font-semibold">{result.outputTokens ?? "—"}</div></div>
+              </div>
+            </motion.div>
+          )}
+        </div>
+
+        <div className="sticky bottom-0 bg-card border-t border-border p-4 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Close</Button>
+          {status === "done" && <Button onClick={runTest} className="bg-brand hover:bg-brand-dark text-white gap-2"><Icon name="RotateCcw" className="w-4 h-4" /> Run again</Button>}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}

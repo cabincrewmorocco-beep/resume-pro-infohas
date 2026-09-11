@@ -1,0 +1,132 @@
+"use client";
+
+import { recordAI, setFlightScope } from "@/lib/ai/flight-recorder";
+setFlightScope({ scope: "interview", feature: "Interview Plugin", module: "src.lib.plugin-sdk.plugins.interview-plugin" });
+
+// Plugin SDK — Interview Prep Plugin
+// ============================================================================
+
+
+import type { AgentPlugin } from "../interfaces/plugin";
+import type { ServiceContainer } from "../service-container";
+import type { PluginManifest, HealthStatus } from "../types";
+import type { PipelineContext } from "../types";
+import { callAI } from "../../ai";
+import { runWithParseRepair, type SchemaSpec } from "@/lib/agents/structured-output";
+
+export class InterviewPlugin implements AgentPlugin {
+  readonly id = "agent.interview";
+  readonly manifest: PluginManifest = {
+    id: "agent.interview",
+    name: "Interview Prep Agent",
+    version: "1.0.0",
+    author: "ResumeAI Pro",
+    description: "Generates tailored mock interview questions and answers.",
+    capabilities: ["interview-questions-generation"],
+    dependencies: [],
+    entry: "./interview-plugin.ts",
+    configuration: { type: "object", properties: {} },
+    permissions: [],
+  };
+
+  async initialize(ctx: ServiceContainer): Promise<void> {
+    console.info("[InterviewPlugin] Initialized.");
+  }
+
+  async shutdown(): Promise<void> {
+    console.info("[InterviewPlugin] Shutdown.");
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    return "healthy";
+  }
+
+  async run(ctx: PipelineContext): Promise<PipelineContext> {
+    const resume = ctx.resume;
+    const jd = ctx.directive.jobDescription || "";
+    const company = ctx.directive.targetCompany || "the company";
+    const jobTitle = ctx.directive.targetJobTitle || "the role";
+
+    const candidateSummary = `${resume.name}${resume.headline ? `, ${resume.headline}` : ""}`;
+    const experienceSummary = resume.experience.slice(0, 3).map((e) => `${e.title} at ${e.company}`).join("; ");
+    const skillsSummary = resume.skills.slice(0, 10).map((s) => s.name).join(", ");
+    const jobSummary = jd.slice(0, 800);
+
+    const result = await recordAI({
+      systemPrompt: `You are an expert interview coach. Generate a tailored interview package based on the candidate's background and the target job description. Output MUST be valid JSON (no markdown formatting, no prefix/suffix text) representing a list of questions.`,
+      userPrompt: `Generate exactly 9 interview questions (3 behavioral, 3 technical, 2 situational, 1 company-fit). For each question, provide:
+- question: the question text
+- category: "behavioral", "technical", "situational", or "company-fit"
+- purpose: what this question evaluates
+- modelAnswer: a stellar response matching candidate experience
+
+CANDIDATE: ${candidateSummary}
+EXPERIENCE: ${experienceSummary}
+KEY SKILLS: ${skillsSummary}
+
+TARGET ROLE: ${jobTitle} at ${company}
+JOB REQUIREMENTS: ${jobSummary}
+
+JSON Output structure:
+[
+  { "question": "...", "category": "...", "purpose": "...", "modelAnswer": "..." }
+]`,
+      maxTokens: 1500,
+      taskCategory: "document",
+    });
+
+    const INTERVIEW_QUESTIONS_SCHEMA: SchemaSpec = {
+      type: "array",
+      minLength: 1,
+      items: {
+        type: "object",
+        required: ["question", "category"],
+        properties: {
+          question: { type: "string" },
+          category: { type: "string" },
+          purpose: { type: "string" },
+          modelAnswer: { type: "string" },
+        },
+      },
+      label: "interview questions",
+    };
+
+    // STRUCTURED OUTPUT: robust cascade + ONE bounded parse-error repair
+    // round. Previously a bare JSON.parse — any prose wrap, fence or trailing
+    // comma silently produced ZERO questions and cascaded the whole interview
+    // package to the static fallback.
+    if (result && result.text) {
+      try {
+        const { data: parsed, repairRounds } = await runWithParseRepair<unknown[]>(
+          async (repairFeedback) => {
+            if (!repairFeedback) return result.text;
+            const retry = await recordAI({
+              systemPrompt: `You are an expert interview coach. Return ONLY valid JSON — no markdown fences, no prose. ${repairFeedback}`,
+              userPrompt: `Generate exactly 9 interview questions for the candidate against the target role. JSON structure: [{"question": "...", "category": "behavioral|technical|situational|company-fit", "purpose": "...", "modelAnswer": "..."}]
+
+CANDIDATE: ${candidateSummary}
+EXPERIENCE: ${experienceSummary}
+KEY SKILLS: ${skillsSummary}
+TARGET ROLE: ${jobTitle} at ${company}
+JOB REQUIREMENTS: ${jobSummary}`,
+              maxTokens: 1500,
+              taskCategory: "document",
+            });
+            return retry.text ?? "";
+          },
+          INTERVIEW_QUESTIONS_SCHEMA,
+          { label: "InterviewPlugin", maxRepairRounds: 1 }
+        );
+        if (Array.isArray(parsed)) {
+          ctx.metadata.interviewQuestions = parsed;
+          if (repairRounds > 0) {
+            console.info(`[InterviewPlugin] JSON recovered after ${repairRounds} repair round(s).`);
+          }
+        }
+      } catch (err) {
+        console.warn("[InterviewPlugin] structured parse failed after repair round:", err);
+      }
+    }
+    return ctx;
+  }
+}

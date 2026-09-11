@@ -1,0 +1,1034 @@
+// ResumeAI Pro — Cloud API client
+// All data flows through this client → Cloudflare Worker → D1
+// The browser is NEVER the permanent storage location for business data.
+
+import { parseDbApplication } from "./applications-logic";
+
+// Defensive JD normalization — same impl as store.ts (imported lazily to avoid
+// a circular dependency). Guarantees every JD has all expected array fields
+// as real arrays so downstream React renders and scoreATS() never crash on
+// undefined.length / undefined.map.
+function normalizeJD<T extends Record<string, any>>(jd: T): T {
+  if (!jd || typeof jd !== "object") return jd;
+  const toArray = (v: any): any[] => Array.isArray(v) ? v : [];
+  const toStr = (v: any): string | undefined => (v === null || v === undefined) ? undefined : String(v);
+  return {
+    ...jd,
+    id: jd.id || `jd_${Math.random().toString(36).slice(2, 9)}`,
+    title: typeof jd.title === "string" ? jd.title : (jd.title ? String(jd.title) : "Untitled role"),
+    company: toStr(jd.company),
+    location: toStr(jd.location),
+    employmentType: toStr(jd.employmentType),
+    salary: toStr(jd.salary),
+    experienceYears: toStr(jd.experienceYears),
+    education: toStr(jd.education),
+    rawText: toStr(jd.rawText),
+    url: toStr(jd.url),
+    source: typeof jd.source === "string" ? jd.source : "text",
+    createdAt: jd.createdAt || new Date().toISOString(),
+    responsibilities: toArray(jd.responsibilities),
+    requiredSkills: toArray(jd.requiredSkills),
+    preferredSkills: toArray(jd.preferredSkills),
+    technologies: toArray(jd.technologies),
+    keywords: toArray(jd.keywords),
+  } as T;
+}
+
+const API_BASE = "https://resumeai-pro-api.rachidelsabah.workers.dev";
+
+// Safe storage accessors — the browser exposes sessionStorage/localStorage as
+// globals, but some environments (tests, SSR shims) only provide them on
+// `window`. Resolve both patterns, never throw.
+function safeSessionStorage(): Storage | null {
+  try {
+    if (typeof sessionStorage !== "undefined") return sessionStorage;
+  } catch { /* blocked */ }
+  return (typeof window !== "undefined" ? (window as any).sessionStorage : null) ?? null;
+}
+function safeLocalStorage(): Storage | null {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch { /* blocked */ }
+  return (typeof window !== "undefined" ? (window as any).localStorage : null) ?? null;
+}
+
+// Session user ID — sessionStorage first (set by setUserId on sign-in), then
+// the persisted session in localStorage (same identity across new tabs and
+// browser restarts), then "anonymous".
+//
+// WHY the fallback matters: sessionStorage is PER-TAB. Every request made
+// before page.tsx's sync effect runs (or from a freshly opened tab) used to
+// go out as "anonymous" — and ALL anonymous browsers share one D1 user_id
+// bucket, which leaked data between users. Falling back to the persisted
+// session guarantees each signed-in user keeps their own identity everywhere.
+export function getEffectiveUserId(): string {
+  if (typeof window === "undefined") return "anonymous";
+  const sid = safeSessionStorage()?.getItem("resumeai-user-id");
+  if (sid) return sid;
+  try {
+    const raw = safeLocalStorage()?.getItem("resumeai-session");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const user = parsed?.user;
+      const notExpired = !parsed?.expiresAt || Date.now() <= parsed.expiresAt;
+      if (user?.id && notExpired) {
+        // Heal sessionStorage so subsequent reads are cheap and consistent.
+        safeSessionStorage()?.setItem("resumeai-user-id", user.id);
+        return user.id;
+      }
+    }
+  } catch {
+    /* corrupted session payload — treat as anonymous */
+  }
+  return "anonymous";
+}
+
+function getUserId(): string {
+  return getEffectiveUserId();
+}
+
+export function setUserId(id: string) {
+  safeSessionStorage()?.setItem("resumeai-user-id", id);
+}
+
+export function clearUserId() {
+  safeSessionStorage()?.removeItem("resumeai-user-id");
+}
+
+/**
+ * Namespace a localStorage backup key by the effective user id.
+ *
+ * WHY: the crash-recovery backups (resumes / JDs / cover letters / …) used to
+ * live under SHARED keys. When a new user signed in on the same browser, the
+ * cloud returned an empty collection for them and the sync fallback restored
+ * the PREVIOUS user's backup into their session — cross-user data leak.
+ * Scoping the keys by user id keeps the same-user crash recovery intact while
+ * structurally making it impossible for one user's backup to surface in
+ * another user's session.
+ */
+export function userScopedKey(base: string): string {
+  return `${base}:${getEffectiveUserId()}`;
+}
+
+/**
+ * Retry wrapper — retries network requests with exponential backoff.
+ * Used for all cloud API calls to handle transient network failures.
+ *
+ * Retry policy:
+ *   - 5xx server errors: RETRY (transient — server may recover)
+ *   - Network errors (TypeError "Failed to fetch", AbortError timeout): RETRY
+ *     (transient — could be a temporary network blip)
+ *   - 4xx client errors (400/401/403/404/422): NO RETRY (permanent — request is bad)
+ *   - CORS errors: NO RETRY (permanent — server config issue)
+ */
+// ============ 5XX CIRCUIT BREAKER ============
+// INCIDENT (2026-09-08): a D1 schema error made GET /api/users return 500 for
+// every signed-in caller, and the page kept issuing that request (every boot
+// sync / admin mount) — an effectively unbounded console error storm. Each
+// individual call site IS bounded (fetchWithRetry: ≤3 attempts with backoff),
+// but no layer globally capped the request RATE across invocations.
+//
+// This circuit breaker adds the missing cap: once ≥ BREAKER_THRESHOLD 5xx
+// attempts are recorded for the same method+path within the rolling window,
+// further calls for that path fail fast (zero network I/O) until the cooldown
+// elapses. Any non-5xx response (success OR 4xx — the server is reachable)
+// resets the counter. Network-level errors (CORS / offline) intentionally do
+// NOT trip the breaker: they are frequently permanent dev-time conditions
+// (e.g. local CORS misconfig) and failing them fast would hide the real bug.
+const BREAKER_THRESHOLD = 4; // one fully-retried invocation = 3 attempts; a 4th failure means a SECOND invocation hit the same 5xx
+const BREAKER_WINDOW_MS = 60_000; // rolling window for failure timestamps
+const BREAKER_COOLDOWN_MS = 60_000; // how long the circuit stays open
+
+interface BreakerEntry {
+  failures: number[]; // timestamps of recent 5xx attempts
+  openUntil: number; // epoch ms; circuit is open while openUntil > now
+}
+const breakerState = new Map<string, BreakerEntry>();
+
+/** Thrown instead of performing network I/O while a circuit is open. */
+export class CircuitOpenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CircuitOpenError";
+  }
+}
+
+function breakerKey(options: RequestInit, url: string): string {
+  return `${options.method || "GET"} ${url}`;
+}
+
+function isCircuitOpen(key: string, now: number): boolean {
+  const entry = breakerState.get(key);
+  return !!entry && entry.openUntil > now;
+}
+
+function recordFailure(key: string, now: number): void {
+  const entry = breakerState.get(key) ?? { failures: [], openUntil: 0 };
+  entry.failures = entry.failures.filter((t) => now - t < BREAKER_WINDOW_MS);
+  entry.failures.push(now);
+  if (entry.failures.length >= BREAKER_THRESHOLD) {
+    entry.openUntil = now + BREAKER_COOLDOWN_MS;
+  }
+  breakerState.set(key, entry);
+}
+
+function recordSuccess(key: string): void {
+  breakerState.delete(key);
+}
+
+/** Test hook — clears all breaker state so tests start from a clean slate. */
+export function __resetCircuitBreakerForTests(): void {
+  breakerState.clear();
+}
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 2,
+): Promise<Response> {
+  const breakerK = breakerKey(options, url);
+  // Fail fast while the circuit is open — the server is known to be erroring
+  // for this path and retrying would only feed an error loop.
+  if (isCircuitOpen(breakerK, Date.now())) {
+    throw new CircuitOpenError(
+      `Circuit open for ${breakerK} — repeated server errors; suppressing requests for ${BREAKER_COOLDOWN_MS / 1000}s`,
+    );
+  }
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": getUserId(),
+          ...options.headers,
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      // Retry on 5xx server errors (transient) — UNLESS it's the last attempt.
+      if (res.status >= 500 && attempt < maxRetries) {
+        recordFailure(breakerK, Date.now());
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+
+      if (res.status >= 500) {
+        // Final-attempt 5xx: still counts toward the breaker before the
+        // caller sees the error response.
+        recordFailure(breakerK, Date.now());
+      } else {
+        // Server reachable and behaving (< 500, includes 4xx) — reset.
+        recordSuccess(breakerK);
+      }
+
+      // 4xx errors (400/401/403/404/422): permanent — do NOT retry.
+      // Return the response and let the caller decide what to do.
+      return res;
+    } catch (err: any) {
+      clearTimeout(timeout);
+      lastError = err;
+
+      // Distinguish transient vs permanent network errors:
+      //   - AbortError (timeout): transient → retry
+      //   - TypeError "Failed to fetch": could be CORS (permanent) OR a network
+      //     blip (transient). We retry once on the first attempt; if it fails
+      //     the same way, we give up.
+      const isAbort = err?.name === "AbortError";
+      const isFailedToFetch = /failed to fetch/i.test(err?.message || "") ||
+                              /load failed/i.test(err?.message || "") ||
+                              err?.name === "TypeError";
+
+      if (attempt < maxRetries && (isAbort || isFailedToFetch)) {
+        // Shorter backoff for network errors — usually either works immediately
+        // or fails immediately (CORS). No point waiting 2s/4s.
+        await new Promise((r) => setTimeout(r, 250 * Math.pow(2, attempt)));
+        continue;
+      }
+      // Last attempt failed — give up.
+      break;
+    }
+  }
+  throw lastError ?? new Error("fetchWithRetry exhausted retries");
+}
+
+async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  try {
+    const res = await fetchWithRetry(`${API_BASE}${path}`, options, 2);
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({ error: res.statusText }))) as any;
+      throw new Error(err.error || `API ${res.status}`);
+    }
+    return res.json();
+  } catch (e: any) {
+    if (e?.name === "CircuitOpenError") {
+      // Circuit breaker: the API has 5xx'd repeatedly for this path. Surface a
+      // single friendly error instead of feeding the request storm.
+      throw new Error("Cloud API temporarily unavailable (repeated server errors) — data saved locally as backup.");
+    }
+    // If the error is a network failure (not an API error), throw a
+    // user-friendly message that the cloud is unreachable.
+    if (e?.name === "AbortError" || e?.message?.includes("fetch")) {
+      throw new Error("Cloud sync unavailable — data saved locally as backup.");
+    }
+    throw e;
+  }
+}
+
+// ============ RESUMES ============
+export const api = {
+  // Resumes
+  getResumes: () => apiFetch<{ resumes: any[] }>("/api/resumes"),
+  createResume: (resume: any) => apiFetch("/api/resumes", { method: "POST", body: JSON.stringify(resume) }),
+  updateResume: (id: string, patch: any) => apiFetch(`/api/resumes/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteResume: (id: string) => apiFetch(`/api/resumes/${id}`, { method: "DELETE" }),
+
+  // Cover Letters
+  getCoverLetters: () => apiFetch<{ coverLetters: any[] }>("/api/cover-letters"),
+  createCoverLetter: (cl: any) => apiFetch("/api/cover-letters", { method: "POST", body: JSON.stringify(cl) }),
+  updateCoverLetter: (id: string, patch: any) => apiFetch(`/api/cover-letters/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteCoverLetter: (id: string) => apiFetch(`/api/cover-letters/${id}`, { method: "DELETE" }),
+
+  // Job Descriptions
+  getJobDescriptions: () => apiFetch<{ jobDescriptions: any[] }>("/api/job-descriptions"),
+  createJobDescription: (jd: any) => apiFetch("/api/job-descriptions", { method: "POST", body: JSON.stringify(jd) }),
+  deleteJobDescription: (id: string) => apiFetch(`/api/job-descriptions/${id}`, { method: "DELETE" }),
+
+  // Interview Packages
+  getInterviews: () => apiFetch<{ interviews: any[] }>("/api/interviews"),
+  createInterview: (iv: any) => apiFetch("/api/interviews", { method: "POST", body: JSON.stringify(iv) }),
+  deleteInterview: (id: string) => apiFetch(`/api/interviews/${id}`, { method: "DELETE" }),
+
+  // ATS Reports
+  getATSReports: () => apiFetch<{ atsReports: any[] }>("/api/ats-reports"),
+  createATSReport: (report: any) => apiFetch("/api/ats-reports", { method: "POST", body: JSON.stringify(report) }),
+
+  // Applications (job application tracker) — per-user Kanban CRM rows
+  getApplications: () => apiFetch<{ applications: any[] }>("/api/applications"),
+  createApplication: (a: any) => apiFetch("/api/applications", { method: "POST", body: JSON.stringify(a) }),
+  updateApplication: (id: string, patch: any) => apiFetch(`/api/applications/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteApplication: (id: string) => apiFetch(`/api/applications/${id}`, { method: "DELETE" }),
+
+  // Users
+  getUsers: () => apiFetch<{ users: any[] }>("/api/users"),
+  createUser: (user: any) => apiFetch("/api/users", { method: "POST", body: JSON.stringify(user) }),
+  updateUser: (id: string, patch: any) => apiFetch(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteUser: (id: string) => apiFetch(`/api/users/${id}`, { method: "DELETE" }),
+
+  // AI Providers
+  getProviders: () => apiFetch<{ providers: any[] }>("/api/providers"),
+  createProvider: (provider: any) => apiFetch("/api/providers", { method: "POST", body: JSON.stringify(provider) }),
+  updateProvider: (id: string, patch: any) => apiFetch(`/api/providers/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteProvider: (id: string) => apiFetch(`/api/providers/${id}`, { method: "DELETE" }),
+
+  // Prompts
+  getPrompts: () => apiFetch<{ prompts: any[] }>("/api/prompts"),
+  createPrompt: (prompt: any) => apiFetch("/api/prompts", { method: "POST", body: JSON.stringify(prompt) }),
+  updatePrompt: (id: string, patch: any) => apiFetch(`/api/prompts/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deletePrompt: (id: string) => apiFetch(`/api/prompts/${id}`, { method: "DELETE" }),
+
+  // Audit Logs
+  getAuditLogs: () => apiFetch<{ logs: any[] }>("/api/audit-logs"),
+  createAuditLog: (log: any) => apiFetch("/api/audit-logs", { method: "POST", body: JSON.stringify(log) }),
+
+  // Settings
+  getBranding: () => apiFetch<{ branding: any }>("/api/settings/branding"),
+  updateBranding: (branding: any) => apiFetch("/api/settings/branding", { method: "PUT", body: JSON.stringify(branding) }),
+  getFlags: () => apiFetch<{ flags: Record<string, boolean> }>("/api/settings/flags"),
+  updateFlag: (key: string, value: boolean) => apiFetch(`/api/settings/flags/${key}`, { method: "PUT", body: JSON.stringify({ value }) }),
+
+  // Downloads
+  getDownloads: () => apiFetch<{ downloads: any[] }>("/api/downloads"),
+  createDownload: (download: any) => apiFetch("/api/downloads", { method: "POST", body: JSON.stringify(download) }),
+
+  // Career Materials (RAG)
+  getCareerMaterials: () => apiFetch<{ careerMaterials: any[] }>("/api/career-materials"),
+  createCareerMaterial: (cm: any) => apiFetch("/api/career-materials", { method: "POST", body: JSON.stringify(cm) }),
+  deleteCareerMaterial: (id: string) => apiFetch(`/api/career-materials/${id}`, { method: "DELETE" }),
+
+  // Agent Configuration Center (directives #20/#21) — authoritative D1
+  // persistence for the 18-agent registry with server-side versioning.
+  getAgentConfigs: () => apiFetch<{ ok: boolean; agentConfigs: any[]; version: number; updatedAt: string | null; updatedBy: string | null }>("/api/agent-configs"),
+  updateAgentConfigs: (agentConfigs: any[], updatedBy?: string) =>
+    apiFetch<{ ok: boolean; version: number; updatedAt: string; count: number }>(
+      "/api/agent-configs",
+      { method: "PUT", body: JSON.stringify({ agentConfigs, updatedBy }) },
+    ),
+
+  // Provider sessions (directive #39) — real lifecycle (session payloads are
+  // encrypted client-side by the SessionManager before reaching the API).
+  getProviderSession: (provider: string) => apiFetch<{ ok: boolean; session: any }>(`/api/provider-sessions/${provider}`),
+  putProviderSession: (provider: string, session: any) =>
+    apiFetch(`/api/provider-sessions/${provider}`, { method: "PUT", body: JSON.stringify(session) }),
+
+  // Resume shares (migration 0022) — server-backed shareable links.
+  // createOrRefresh UPSERTS on (user, resume): the token/URL stays stable
+  // across refreshes so already-sent links keep working with fresh content.
+  createOrRefreshShare: (payload: { resumeId: string; resume: unknown; hideContact?: boolean; expiresInDays?: number | null }) =>
+    apiFetch<{ ok: boolean; share: { id: string; token: string; resumeId: string; active: boolean; expiresAt: string | null } }>(
+      "/api/shares", { method: "POST", body: JSON.stringify(payload) },
+    ),
+  getShares: () => apiFetch<{ shares: any[] }>("/api/shares"),
+  updateShare: (id: string, patch: { active?: boolean; resume?: unknown; hideContact?: boolean }) =>
+    apiFetch<{ ok: boolean; share: any }>(`/api/shares/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteShare: (id: string) => apiFetch(`/api/shares/${id}`, { method: "DELETE" }),
+  // PUBLIC reader for /r/<token> — no identity needed. Uses apiFetch for the
+  // retry/timeout handling; the harmless X-User-Id header it attaches is
+  // simply ignored by the public route.
+  fetchPublicShare: (token: string) =>
+    apiFetch<{ ok: boolean; resume: unknown; hideContact: boolean; sharedAt: string }>(
+      `/api/public/shares/${encodeURIComponent(token)}`,
+    ),
+
+  // Health
+  health: () => apiFetch<{ ok: boolean }>("/api/health"),
+};
+
+/**
+ * Wraps an async API function so it NEVER throws synchronously and NEVER rejects.
+ *
+ * Why this exists:
+ *   The Zustand store calls cloud APIs in a fire-and-forget manner — local state
+ *   is updated optimistically and the cloud sync is a side effect. If the cloud
+ *   API throws synchronously (e.g. undefined function) or rejects (e.g. network
+ *   error, CORS, 500), the calling action would crash the page.
+ *
+ * Behavior:
+ *   - If `fn` is not a function (undefined, null), returns a no-op async function
+ *     that resolves to undefined. This makes the call site safe even if the
+ *     cloud API surface changes.
+ *   - If `fn` is a function, returns an async wrapper that catches all errors
+ *     and logs a warning to the console. The promise always resolves.
+ *
+ * Usage:
+ *   cloudApiSafe(cloudApi.createResume)(resume).catch(() => {});
+ *   // or with destructured methods:
+ *   cloudApiSafe(createResume)(resume).catch(() => {});
+ */
+export function cloudApiSafe<T extends (...args: any[]) => Promise<any>>(
+  fn: T | undefined | null,
+): T {
+  if (typeof fn !== "function") {
+    return ((..._: any[]) => Promise.resolve(undefined)) as unknown as T;
+  }
+  return (async (...args: Parameters<T>) => {
+    try {
+      return await fn(...args);
+    } catch (e: any) {
+      if (typeof console !== "undefined" && console.warn) {
+        console.warn("[cloudApiSafe] Cloud sync failed (non-fatal):", e?.message || e);
+      }
+      return undefined as any;
+    }
+  }) as T;
+}
+
+// ============ SYNC HOOK ============
+// On app load, sync all data from D1 to the Zustand store
+export async function syncAllFromCloud(store: any): Promise<void> {
+  try {
+    const [resumesRes, clsRes, jdsRes, ivsRes, atsRes, appsRes, providersRes, promptsRes, logsRes, brandingRes, flagsRes, usersRes] = await Promise.all([
+      api.getResumes().catch(() => ({ resumes: [] })),
+      api.getCoverLetters().catch(() => ({ coverLetters: [] })),
+      api.getJobDescriptions().catch(() => ({ jobDescriptions: [] })),
+      api.getInterviews().catch(() => ({ interviews: [] })),
+      api.getATSReports().catch(() => ({ atsReports: [] })),
+      api.getApplications().catch(() => ({ applications: [] })),
+      api.getProviders().catch(() => ({ providers: [] })),
+      api.getPrompts().catch(() => ({ prompts: [] })),
+      api.getAuditLogs().catch(() => ({ logs: [] })),
+      api.getBranding().catch(() => ({ branding: null })),
+      api.getFlags().catch(() => ({ flags: null })),
+      api.getUsers().catch(() => ({ users: [] })), // === BUG FIX: sync users from D1 ===
+    ]);
+
+    // Hydrate store with cloud data — ALWAYS set arrays even if empty
+    const resumes = (resumesRes.resumes || []).map(parseDbResume);
+    const coverLetters = (clsRes.coverLetters || []).map(parseDbCoverLetter);
+    const jobDescriptions = (jdsRes.jobDescriptions || []).map(parseDbJD).map(normalizeJD);
+    const interviews = (ivsRes.interviews || []).map(parseDbInterview);
+    const atsReports = (atsRes.atsReports || []).map(parseDbATS);
+    const applications = (appsRes.applications || []).map(parseDbApplication);
+    const providers = (providersRes.providers || []).map(parseDbProvider);
+    const prompts = (promptsRes.prompts || []).map(parseDbPrompt);
+    const logs = logsRes.logs || [];
+
+    // Only override if we got data from the cloud — otherwise keep seed data
+    if (resumes.length) {
+      store.setState({ resumes });
+    } else {
+      // Fallback: restore from localStorage backup (in case cloud API was unreachable on previous session)
+      if (typeof localStorage !== "undefined") {
+        try {
+          const backup = JSON.parse(localStorage.getItem(userScopedKey("resumeai-resumes-backup")) || "[]");
+          if (backup.length > 0) {
+            store.setState({ resumes: backup });
+          }
+        } catch (err) { console.warn("[cloudApi] Resumes backup restore failed:", err instanceof Error ? err.message : err); }
+      }
+    }
+    if (coverLetters.length) store.setState({ coverLetters });
+    else {
+      // Fallback: restore cover letters from localStorage backup
+      if (typeof localStorage !== "undefined") {
+        try {
+          const backup = JSON.parse(localStorage.getItem(userScopedKey("resumeai-coverletters-backup")) || "[]");
+          if (backup.length > 0) store.setState({ coverLetters: backup });
+        } catch (err) { console.warn("[cloudApi] Cover letters backup restore failed:", err instanceof Error ? err.message : err); }
+      }
+    }
+    if (jobDescriptions.length) store.setState({ jobDescriptions });
+    else {
+      // Fallback: restore JDs from localStorage backup — fixes the "skill gap
+      // showing zero job" bug where parsed JDs were lost after browser refresh
+      // because the cloud worker returned an empty array (network failure,
+      // user-id mismatch, or D1 still seeding).
+      if (typeof localStorage !== "undefined") {
+        try {
+          const backup = JSON.parse(localStorage.getItem(userScopedKey("resumeai-jds-backup")) || "[]");
+          if (backup.length > 0) {
+            // Normalize every JD so missing fields can never crash downstream
+            // renders (e.g. Optimizer's jdParsed.keywords.length access).
+            const safeBackup = backup.map(normalizeJD);
+            store.setState({ jobDescriptions: safeBackup });
+            // Best-effort: re-sync backup JDs to the cloud so future loads work.
+            for (const jd of safeBackup) {
+              api.createJobDescription(jd).catch((e) => { console.warn("[cloudApi] JD cloud sync failed:", e instanceof Error ? e.message : e); });
+            }
+          }
+        } catch (err) { console.warn("[cloudApi] Job descriptions backup restore failed:", err instanceof Error ? err.message : err); }
+      }
+    }
+    if (interviews.length) store.setState({ interviews });
+    else {
+      if (typeof localStorage !== "undefined") {
+        try {
+          const backup = JSON.parse(localStorage.getItem(userScopedKey("resumeai-interviews-backup")) || "[]");
+          if (backup.length > 0) store.setState({ interviews: backup });
+        } catch (err) { console.warn("[cloudApi] Interviews backup restore failed:", err instanceof Error ? err.message : err); }
+      }
+    }
+    if (atsReports.length) store.setState({ atsReports });
+    else {
+      if (typeof localStorage !== "undefined") {
+        try {
+          const backup = JSON.parse(localStorage.getItem(userScopedKey("resumeai-ats-backup")) || "[]");
+          if (backup.length > 0) store.setState({ atsReports: backup });
+        } catch (err) { console.warn("[cloudApi] ATS reports backup restore failed:", err instanceof Error ? err.message : err); }
+      }
+    }
+    // Applications (job application tracker) — cloud first, user-scoped backup
+    // fallback (never restores ANOTHER user's tracker rows after an account
+    // switch; keys are namespaced via userScopedKey).
+    if (applications.length) {
+      store.setState({ applications });
+    } else {
+      if (typeof localStorage !== "undefined") {
+        try {
+          const backup = JSON.parse(localStorage.getItem(userScopedKey("resumeai-applications-backup")) || "[]");
+          if (backup.length > 0) store.setState({ applications: backup });
+        } catch (err) { console.warn("[cloudApi] Applications backup restore failed:", err instanceof Error ? err.message : err); }
+      }
+    }
+    // [PROVIDER SYNC] Synchronize D1 providers with seed defaults and custom providers.
+    // Restore custom providers saved in localStorage so unauthenticated / locally added providers survive refresh.
+    let effectiveProviders = [...providers];
+    if (typeof localStorage !== "undefined") {
+      try {
+        const customProviders = JSON.parse(localStorage.getItem("resumeai-custom-providers") || "[]");
+        for (const cp of customProviders) {
+          if (!effectiveProviders.some((p: any) => p.id === cp.id)) {
+            effectiveProviders.push(cp);
+          }
+        }
+        const overrides = JSON.parse(localStorage.getItem("resumeai-provider-overrides") || "{}");
+        effectiveProviders = effectiveProviders.map((p: any) => {
+          const ov = overrides[p.id];
+          return ov ? { ...p, ...ov } : p;
+        });
+      } catch (err) {
+        console.warn("[cloudApi] Failed to restore custom providers or overrides from localStorage:", err);
+      }
+    }
+
+    const { syncProviderConfigs, calculateProviderHash } = await import("./provider-sync");
+    
+    // === HASH GUARD: Skip sync entirely if provider state is unchanged ===
+    const providerHash = calculateProviderHash(effectiveProviders);
+    const lastHash = store.getState()._lastProviderHash || "";
+    if (providerHash !== lastHash) {
+      const { providers: syncedProviders, result: syncResult } = syncProviderConfigs(effectiveProviders as any);
+      
+      // Persist backfilled providers to D1 so they survive refresh
+      if (syncResult.backfilled > 0) {
+        const backfilled = syncedProviders.filter(
+          (p: any) => !providers.some((d1: any) => d1.id === p.id)
+        );
+        for (const bp of backfilled) {
+          api.createProvider(bp).catch((e: any) => {
+            console.warn("[provider-sync] Backfill persist failed:", e instanceof Error ? e.message : e);
+          });
+        }
+      }
+
+      // Persist repaired providers to D1 so they survive refresh and resolve drift permanently
+      if (syncResult.repaired > 0) {
+        for (const sp of syncedProviders) {
+          const original = providers.find((p: any) => p.id === sp.id);
+          if (original && JSON.stringify(original) !== JSON.stringify(sp)) {
+            api.updateProvider(sp.id, sp).catch((e: any) => {
+              console.warn(`[provider-sync] Repair persist failed for ${sp.name}:`, e instanceof Error ? e.message : e);
+            });
+          }
+        }
+      }
+      
+      // Deep equality check before store.setState
+      const currentProviders = store.getState().providers;
+      const currentJson = JSON.stringify(currentProviders);
+      const syncedJson = JSON.stringify(syncedProviders);
+      if (currentJson !== syncedJson) {
+        store.setState({ providers: syncedProviders, _lastProviderHash: calculateProviderHash(syncedProviders) });
+      } else {
+        // Store unchanged — just update hash to prevent future checks
+        store.setState({ _lastProviderHash: providerHash });
+      }
+      
+      if (syncResult.driftDetected) {
+        console.warn(
+          `[PROVIDER SYNC] Database drift detected. ` +
+          `${syncResult.repaired} repaired, ${syncResult.backfilled} backfilled. ` +
+          `Details: ${syncResult.driftDetails.join("; ")}`
+        );
+      } else {
+        console.info("[PROVIDER SYNC] Provider registry synchronized.");
+      }
+    } else {
+      // No drift — single line log
+      console.info("[PROVIDER SYNC] Provider registry already up-to-date.");
+    }
+    if (prompts.length) store.setState({ prompts });
+    if (logs.length) store.setState({ logs });
+
+    // === BUG FIX: Sync users from D1 ===
+    // Previously, syncAllFromCloud did NOT fetch users from D1. So Puter users
+    // (which are persisted to D1 via cloudApiSafe(createUser)) were never loaded
+    // back into the store — the admin Users + User Approval pages only showed
+    // the seed super-admin. Now we fetch all users from D1 and merge them with
+    // the existing store users (preserving the super-admin seed + any in-memory
+    // users that haven't been synced yet).
+    const cloudUsers = (usersRes.users || []).map(parseDbUser);
+    if (cloudUsers.length > 0) {
+      const existingUsers = store.getState().users || [];
+
+      // === SUPER-ADMIN PROTECTION ===
+      // The seed super-admin (id: u_superadmin) has the CORRECT password hash
+      // (computed from SUPER_ADMIN_SEED.password at runtime). D1 may have a
+      // STALE hash (e.g. "rh1$superadmin_hashed_placeholder" from an old seed).
+      // Always prefer the seed's hash + email for the super-admin if the D1 hash
+      // is the exact stale placeholder from the initial migration, or if it's missing.
+      // If the D1 hash is different, it means the super-admin explicitly changed
+      // their password via the UI, so we MUST respect the updated D1 hash.
+      const seedSuperAdmin = existingUsers.find((u: any) => u.id === "u_superadmin");
+      const mergedCloudUsers = cloudUsers.map((u: any) => {
+        if (u.id === "u_superadmin" && seedSuperAdmin) {
+          const isStaleHash = !u.passwordHash || u.passwordHash === "rh1$superadmin_hashed_placeholder";
+          return {
+            ...u,
+            email: seedSuperAdmin.email,
+            passwordHash: isStaleHash ? seedSuperAdmin.passwordHash : u.passwordHash,
+            role: "super_admin",
+            status: "approved",
+          };
+        }
+        return u;
+      });
+
+      // Merge: start with cloud users, then add any in-memory users that aren't
+      // in D1 yet (by ID) — this preserves the super-admin seed if it's not in D1.
+      const cloudUserIds = new Set(mergedCloudUsers.map((u: any) => u.id));
+      const missingFromCloud = existingUsers.filter((u: any) => !cloudUserIds.has(u.id));
+      const mergedUsers = [...mergedCloudUsers, ...missingFromCloud];
+      store.setState({ users: mergedUsers });
+    }
+    if (brandingRes.branding && Object.keys(brandingRes.branding).length > 0) {
+      const bd: any = brandingRes.branding;
+      // Only restore branding fields that are actually branding (not nested settings)
+      const brandingFields = ["appName", "tagline", "primaryColor", "accentColor", "logoUrl", "emailFromName", "emailFromAddress", "pdfFooterText"];
+      const cleanBranding: any = {};
+      for (const key of brandingFields) {
+        if (bd[key] !== undefined) cleanBranding[key] = bd[key];
+      }
+      if (Object.keys(cleanBranding).length > 0) store.setState({ branding: { ...store.getState().branding, ...cleanBranding } });
+
+      // Restore optimizerDirective if it was stored as part of branding settings
+      if (bd.optimizerDirective && typeof bd.optimizerDirective === "object") {
+        // Only overwrite if the stored version has meaningful data (not all defaults)
+        const stored = bd.optimizerDirective;
+        if (stored.customDirectiveOverride?.trim() || stored.bodyFontSizePt !== 10.5) {
+          console.info("[syncAllFromCloud] Restoring optimizerDirective from D1");
+          store.setState({ optimizerDirective: stored });
+        }
+      }
+      // Restore fallbackChain if it was stored as part of branding settings
+      if (bd.fallbackChain && typeof bd.fallbackChain === "object") {
+        const stored = bd.fallbackChain;
+        if (stored.entries && Array.isArray(stored.entries) && stored.entries.length > 0) {
+          console.info(`[syncAllFromCloud] Restoring fallbackChain from D1 (${stored.entries.length} entries)`);
+          store.setState({ fallbackChain: stored });
+        }
+      }
+      // Restore pipeline orchestration config (profiles, agent configs, prompt versions)
+      if (bd.pipelineProfiles && Array.isArray(bd.pipelineProfiles) && bd.pipelineProfiles.length > 0) {
+        console.info(`[syncAllFromCloud] Restoring pipelineProfiles from D1 (${bd.pipelineProfiles.length} profiles)`);
+        store.setState({ pipelineProfiles: bd.pipelineProfiles });
+      }
+      if (bd.selectedProfileId && typeof bd.selectedProfileId === "string") {
+        store.setState({ selectedProfileId: bd.selectedProfileId });
+      }
+      // Agent Configuration Center restore (directive #21) — the dedicated
+      // /api/agent-configs endpoint is the authoritative source (versioned);
+      // fall back to a legacy inline `agentConfigs` array on branding if the
+      // endpoint has nothing persisted yet.
+      try {
+        const acRes = await api.getAgentConfigs();
+        if (acRes?.ok && Array.isArray(acRes.agentConfigs) && acRes.agentConfigs.length > 0) {
+          console.info(`[syncAllFromCloud] Restoring agentConfigs from D1 via /api/agent-configs (${acRes.agentConfigs.length} agents, version ${acRes.version})`);
+          store.setState({ agentConfigs: acRes.agentConfigs, agentConfigVersion: acRes.version ?? 0 });
+        } else if (bd.agentConfigs && Array.isArray(bd.agentConfigs) && bd.agentConfigs.length > 0) {
+          console.info(`[syncAllFromCloud] Restoring agentConfigs from legacy branding payload (${bd.agentConfigs.length} agents)`);
+          store.setState({ agentConfigs: bd.agentConfigs });
+        }
+      } catch (acErr: any) {
+        console.warn("[syncAllFromCloud] agent-configs restore failed (non-fatal):", acErr?.message || acErr);
+      }
+      if (bd.promptVersions && Array.isArray(bd.promptVersions) && bd.promptVersions.length > 0) {
+        console.info(`[syncAllFromCloud] Restoring promptVersions from D1 (${bd.promptVersions.length} prompts)`);
+        store.setState({ promptVersions: bd.promptVersions });
+      }
+      if (bd.aiDevSettings && typeof bd.aiDevSettings === "object") {
+        store.setState({ aiDevSettings: { ...store.getState().aiDevSettings, ...bd.aiDevSettings } });
+      }
+      // Restore interview scenarios + personas (Super Admin → Scenario/Persona
+      // Management). Non-empty arrays only, so a wiped/legacy row never clobbers
+      // the in-store seeds.
+      if (Array.isArray(bd.scenarios) && bd.scenarios.length > 0) {
+        console.info(`[syncAllFromCloud] Restoring scenarios from D1 (${bd.scenarios.length})`);
+        store.setState({ scenarios: bd.scenarios });
+      }
+      if (Array.isArray(bd.interviewPersonas) && bd.interviewPersonas.length > 0) {
+        console.info(`[syncAllFromCloud] Restoring interviewPersonas from D1 (${bd.interviewPersonas.length})`);
+        store.setState({ interviewPersonas: bd.interviewPersonas });
+      }
+      // Restore custom directive profiles + structural blueprints (Optimizer
+      // Directive editors). Restored whenever the key is an array — INCLUDING
+      // an empty one — so deletions sync across devices too. Both the store
+      // state AND the lib registries are hydrated (the pipeline resolves
+      // blueprints through the registry, not the store).
+      if (Array.isArray(bd.customDirectiveProfiles)) {
+        console.info(`[syncAllFromCloud] Restoring customDirectiveProfiles from D1 (${bd.customDirectiveProfiles.length})`);
+        store.setState({ customDirectiveProfiles: bd.customDirectiveProfiles });
+        try {
+          const { registerCustomProfiles } = await import("./directive-profiles");
+          registerCustomProfiles(bd.customDirectiveProfiles);
+        } catch (regErr: any) {
+          console.warn("[syncAllFromCloud] customProfiles registration failed (non-fatal):", regErr?.message);
+        }
+      }
+      if (Array.isArray(bd.customStructuralBlueprints)) {
+        console.info(`[syncAllFromCloud] Restoring customStructuralBlueprints from D1 (${bd.customStructuralBlueprints.length})`);
+        store.setState({ customStructuralBlueprints: bd.customStructuralBlueprints });
+        try {
+          const { registerCustomBlueprints } = await import("./structural-blueprints");
+          registerCustomBlueprints(bd.customStructuralBlueprints);
+        } catch (regErr: any) {
+          console.warn("[syncAllFromCloud] customBlueprints registration failed (non-fatal):", regErr?.message);
+        }
+      }
+
+      // === RESTORE provider settings from D1 ===
+      // The provider_settings_json column stores the AI routing config
+      // (defaultProviderId, defaultModel, fallbackProviderIds). Without this,
+      // the store always reverts to the seed (Puter + claude-sonnet-4) on refresh.
+      const rawProviderSettings = bd.provider_settings_json || bd.providerSettings;
+      if (rawProviderSettings) {
+        let ps: any = null;
+        if (typeof rawProviderSettings === "string") {
+          try { ps = JSON.parse(rawProviderSettings); } catch (err) { console.warn("[cloudApi] Provider settings JSON parse failed:", err instanceof Error ? err.message : err); }
+        } else if (typeof rawProviderSettings === "object") {
+          ps = rawProviderSettings;
+        }
+        if (ps && (ps.defaultProviderId || ps.defaultModel || ps.fallbackProviderIds)) {
+          // === RESPECT USER'S SAVED PROVIDER SETTINGS ===
+          console.info("[syncAllFromCloud] Restoring providerSettings from D1:", ps.defaultProviderId, ps.defaultModel);
+          store.setState({ providerSettings: { ...store.getState().providerSettings, ...ps } });
+        } else {
+          // === FALLBACK: restore from localStorage backup (when D1 has no
+          // provider_settings_json — e.g. migration not applied yet) ===
+          if (typeof localStorage !== "undefined") {
+            try {
+              const localSettings = localStorage.getItem("resumeai-provider-settings");
+              if (localSettings) {
+                const ls = JSON.parse(localSettings);
+                if (ls.defaultProviderId || ls.defaultModel) {
+                  console.info("[syncAllFromCloud] Restoring providerSettings from localStorage:", ls.defaultProviderId, ls.defaultModel);
+                  store.setState({ providerSettings: { ...store.getState().providerSettings, ...ls } });
+                }
+              }
+            } catch (err) { console.warn("[cloudApi] Provider settings localStorage restore failed:", err instanceof Error ? err.message : err); }
+          }
+        }
+      }
+    }
+    // MERGE (not replace): D1 only stores keys that were toggled/persisted.
+    // Replacing the store wholesale turned every local-only flag into
+    // undefined, silently disabling features until the next toggle.
+    if (flagsRes.flags) store.setState({ flags: { ...store.getState().flags, ...flagsRes.flags } });
+  } catch (e) {
+    console.error("[syncAllFromCloud] Error:", e);
+  }
+}
+
+// ============ PARSERS ============
+function safeJson(s: any, fallback: any) {
+  if (s === null || s === undefined) return fallback;
+  if (typeof s === "object") return s;
+  try { return JSON.parse(s); } catch (err) { console.warn("[cloudApi] safeJson parse failed:", err instanceof Error ? err.message : err); return fallback; }
+}
+function safeArray(s: any): any[] { const v = safeJson(s, []); return Array.isArray(v) ? v : []; }
+function safeObj(s: any): Record<string, any> { const v = safeJson(s, {}); return v && typeof v === "object" ? v : {}; }
+function safeStr(s: any): string { return s ? String(s) : ""; }
+/** Coerce a parsed JSON value that must be a plain string (e.g. additionalInfo). */
+function safeString(s: any): string {
+  if (s === null || s === undefined) return "";
+  if (typeof s === "string") return s;
+  if (typeof s === "number" || typeof s === "boolean") return String(s);
+  return "";
+}
+
+function parseDbResume(r: any): any {
+  const experience = safeArray(r.experience_json).map((e: any) => ({
+    id: e.id || `e_${Math.random().toString(36).slice(2, 8)}`,
+    title: e.title || "",
+    company: e.company || "",
+    location: e.location || "",
+    startDate: e.startDate || "",
+    endDate: e.endDate || "Present",
+    bullets: Array.isArray(e.bullets) ? e.bullets : [],
+  }));
+  const education = safeArray(r.education_json).map((e: any) => ({
+    id: e.id || `ed_${Math.random().toString(36).slice(2, 8)}`,
+    institution: e.institution || "",
+    degree: e.degree || "",
+    field: e.field || "",
+    location: e.location || "",
+    startDate: e.startDate || "",
+    endDate: e.endDate || "",
+    gpa: e.gpa || "",
+    highlights: Array.isArray(e.highlights) ? e.highlights : [],
+  }));
+  const skills = safeArray(r.skills_json).map((s: any) => ({
+    id: s.id || `s_${Math.random().toString(36).slice(2, 8)}`,
+    name: s.name || "",
+    category: s.category || "",
+    level: s.level || undefined,
+  }));
+  return {
+    id: r.id,
+    userId: r.user_id,
+    name: r.name || "", headline: r.headline || "",
+    contact: safeObj(r.contact_json),
+    summary: r.summary || "",
+    experience, education, skills,
+    projects: safeArray(r.projects_json),
+    certifications: safeArray(r.certifications_json),
+    languages: safeArray(r.languages_json),
+    achievements: safeArray(r.achievements_json),
+    // additional_info_json is a JSON-encoded string; dynamic_sections_json an
+    // array. Both were previously dropped on cloud restore (silently losing
+    // the data the worker had persisted).
+    additionalInfo: safeString(safeJson(r.additional_info_json, "")),
+    dynamicSections: safeArray(r.dynamic_sections_json),
+    template: r.template || "ats-professional",
+    accentColor: r.accent_color || "#1154A3",
+    photoUrl: r.photo_url || undefined,
+    dateOfBirth: r.date_of_birth || undefined,
+    source: r.source || "manual",
+    fileName: r.file_name || undefined,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+function parseDbCoverLetter(c: any): any {
+  return { id: c.id, title: c.title, template: c.template, content: c.content, resumeId: c.resume_id, jdId: c.jd_id, company: c.company, role: c.role, createdAt: c.created_at, updatedAt: c.updated_at };
+}
+
+function parseDbJD(j: any): any {
+  return {
+    id: j.id, title: j.title || "Untitled", company: j.company, location: j.location,
+    employmentType: j.employment_type, salary: j.salary,
+    responsibilities: safeArray(j.responsibilities_json),
+    requiredSkills: safeArray(j.required_skills_json),
+    preferredSkills: safeArray(j.preferred_skills_json),
+    technologies: safeArray(j.technologies_json),
+    experienceYears: j.experience_years, education: j.education,
+    keywords: safeArray(j.keywords_json),
+    rawText: j.raw_text, url: j.url, source: j.source || "text", createdAt: j.created_at,
+  };
+}
+
+function parseDbInterview(i: any): any {
+  return { id: i.id, resumeId: i.resume_id, jdId: i.jd_id, company: i.company, role: i.role, questions: safeArray(i.questions_json), createdAt: i.created_at };
+}
+
+function parseDbATS(a: any): any {
+  return {
+    id: a.id, resumeId: a.resume_id, jdId: a.jd_id,
+    scores: { ats: a.ats_score || 0, formatting: a.formatting_score || 0, keywords: a.keywords_score || 0, content: a.content_score || 0, grammar: a.grammar_score || 0, completeness: a.completeness_score || 0 },
+    recommendations: safeArray(a.recommendations_json),
+    missingKeywords: safeArray(a.missing_keywords_json),
+    matchedKeywords: safeArray(a.matched_keywords_json),
+    weakSections: safeArray(a.weak_sections_json),
+    jdMatchPercent: a.jd_match_percent,
+    createdAt: a.created_at,
+  };
+}
+
+function parseDbProvider(p: any): any {
+  return {
+    id: p.id, name: p.name, type: p.provider_type,
+    apiUrl: p.base_url, baseUrl: p.base_url, apiKey: p.api_key_encrypted,
+    alternateApiKeys: safeJson(p.alternate_api_keys_json, []),
+    headersJson: p.headers_json, parametersJson: p.parameters_json,
+    requestTemplate: p.request_template, responsePath: p.response_path,
+    streamingEnabled: p.streaming_enabled === 1,
+    modelName: p.model_name, priority: p.priority,
+    isActive: p.is_active === 1, isDefault: p.is_default === 1,
+    isFallback: p.is_fallback === 1, isBuiltIn: p.is_built_in === 1,
+    allowedForRegularUsers: p.allowed_for_regular_users === 1,
+    timeout: p.timeout, maxTokens: p.max_tokens, temperature: p.temperature,
+    retryAttempts: p.retry_attempts, rateLimitPerMinute: p.rate_limit_per_minute,
+    authType: p.auth_type, supportsFunctionCalling: p.supports_function_calling === 1,
+    costPerInputToken: p.cost_per_input_token, costPerOutputToken: p.cost_per_output_token,
+    applicationId: p.application_id, clientId: p.client_id, redirectUri: p.redirect_uri,
+    enabledModels: safeJson(p.enabled_models_json, []),
+    concurrencyCap: p.concurrency_cap ?? undefined,
+    lastUsedAt: p.last_used_at, status: p.status,
+    usage: { requests: p.usage_requests, tokens: p.usage_tokens, errors: p.usage_errors, avgLatencyMs: p.usage_avg_latency_ms, cost: p.usage_cost },
+  };
+}
+
+function parseDbPrompt(p: any): any {
+  return {
+    id: p.id, name: p.name, category: p.category, content: p.content,
+    providerId: p.provider_id, version: p.version, isActive: p.is_active === 1,
+    variables: safeJson(p.variables_json, []),
+  };
+}
+
+/**
+ * Parse a D1 user row into the User type expected by the store.
+ * Maps DB column names (snake_case) → JS property names (camelCase).
+ */
+function parseDbUser(u: any): any {
+  return {
+    id: u.id,
+    email: u.email || "",
+    username: u.username || u.email?.split("@")[0] || "",
+    name: u.name || "",
+    passwordHash: u.password_hash || undefined,
+    avatarUrl: u.avatar || undefined,
+    provider: u.provider || "email",
+    role: u.role || "user",
+    status: u.status || "pending",
+    createdAt: u.created_at,
+    updatedAt: u.updated_at,
+    lastActiveAt: u.updated_at,
+    lastLoginAt: u.last_login_at,
+    usage: { resumesGenerated: 0, atsChecks: 0, coverLetters: 0, interviewPreps: 0, downloads: 0 },
+  };
+}
+
+/**
+ * Force-refresh the user list from D1. Called by admin pages (Users,
+ * UserApprovals) when they mount — so the admin always sees the latest
+ * users including Puter users that were created since the last sync.
+ */
+export async function refreshUsers(store: any): Promise<void> {
+  try {
+    const res = await api.getUsers();
+    const cloudUsers = (res.users || []).map(parseDbUser);
+    if (cloudUsers.length > 0) {
+      const existingUsers = store.getState().users || [];
+      const cloudUserIds = new Set(cloudUsers.map((u: any) => u.id));
+      const missingFromCloud = existingUsers.filter((u: any) => !cloudUserIds.has(u.id));
+      const mergedUsers = [...cloudUsers, ...missingFromCloud];
+      store.setState({ users: mergedUsers });
+    }
+  } catch (e) {
+    console.warn("[refreshUsers] Failed to fetch users from D1:", e);
+  }
+}
+
+// ============ LOCALSTORAGE MIGRATION ============
+// On first login, check if there's old data in localStorage and migrate it to D1
+export async function migrateLocalStorageToCloud(store: any): Promise<void> {
+  if (typeof window === "undefined") return;
+  const migrationKey = "resumeai-cloud-migration-done";
+  if (localStorage.getItem(migrationKey)) return; // already migrated
+
+  try {
+    const oldData = localStorage.getItem("resumeai-pro");
+    if (!oldData) {
+      localStorage.setItem(migrationKey, "1");
+      return;
+    }
+
+    const parsed = JSON.parse(oldData);
+    const state = parsed.state || {};
+
+    // Migrate resumes
+    if (state.resumes?.length) {
+      for (const r of state.resumes) {
+        await api.createResume(r).catch((e) => { console.warn("[cloudApi] Resume migration failed:", e instanceof Error ? e.message : e); });
+      }
+    }
+
+    // Migrate cover letters
+    if (state.coverLetters?.length) {
+      for (const cl of state.coverLetters) {
+        await api.createCoverLetter(cl).catch((e) => { console.warn("[cloudApi] Cover letter migration failed:", e instanceof Error ? e.message : e); });
+      }
+    }
+
+    // Migrate job descriptions
+    if (state.jobDescriptions?.length) {
+      for (const jd of state.jobDescriptions) {
+        await api.createJobDescription(jd).catch((e) => { console.warn("[cloudApi] JD migration failed:", e instanceof Error ? e.message : e); });
+      }
+    }
+
+    // Migrate interview packages
+    if (state.interviews?.length) {
+      for (const iv of state.interviews) {
+        await api.createInterview(iv).catch((e) => { console.warn("[cloudApi] Interview migration failed:", e instanceof Error ? e.message : e); });
+      }
+    }
+
+    // Mark migration as done
+    localStorage.setItem(migrationKey, "1");
+
+    // DON'T clear old localStorage data yet — keep as backup
+    // User can clear it manually from Settings → Privacy → Clear all local data
+    // Dev-only log
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[Cloud Migration] Migrated localStorage data to D1 successfully.");
+    }
+  } catch (e) {
+    console.error("[Cloud Migration] Error:", e);
+  }
+}

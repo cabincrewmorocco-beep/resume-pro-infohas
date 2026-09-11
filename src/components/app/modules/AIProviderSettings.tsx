@@ -1,0 +1,1054 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Badge, Icon } from "@/components/shared";
+import { useApp } from "@/lib/store";
+import { ProviderManager } from "@/lib/ai/services";
+import { toast } from "sonner";
+import { chainLinkDisplay, type ChainLinkTestResult } from "./routing-chain-diagnostics";
+import { PUTER_CURATED_MODEL_IDS, PUTER_AGENT_PRESETS, type PuterAgentRoutingPreset } from "@/lib/puter-models";
+import { getPrebuiltModelsForProvider } from "@/lib/ai/prebuilt-models";
+
+export function AIProviderSettings() {
+  const settings = useApp((s) => s.providerSettings);
+  const providers = useApp((s) => s.providers);
+  const updateProviderSettings = useApp((s) => s.updateProviderSettings);
+  const updateProvider = useApp((s) => s.updateProvider);
+
+  // Local form state (editable, saved on "Save")
+  const [form, setForm] = useState(settings);
+  const [saving, setSaving] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [customModelMode, setCustomModelMode] = useState<Record<string, boolean>>({});
+
+  // Sync form when settings change from the store (only if no unsaved changes)
+  const settingsRef = settings;
+  useEffect(() => {
+    if (!hasChanges && JSON.stringify(form) !== JSON.stringify(settingsRef)) {
+      setForm(settingsRef);
+    }
+  }, [settings, hasChanges]);
+
+  // Model prefetch state
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [liveModels, setLiveModels] = useState<string[]>([]);
+  const [agentModels, setAgentModels] = useState<Record<string, string[]>>(() => {
+    const init: Record<string, string[]> = {};
+    const puter = providers.find(p => p.type === "puter");
+    if (puter) {
+      init[puter.id] = [...PUTER_CURATED_MODEL_IDS];
+    }
+    return init;
+  });
+  const [fetchingAgentModels, setFetchingAgentModels] = useState<Record<string, boolean>>({});
+
+  // Ensure Puter models are always ready immediately for selection
+  useEffect(() => {
+    const puter = providers.find(p => p.type === "puter");
+    if (puter && (!agentModels[puter.id] || agentModels[puter.id].length === 0)) {
+      setAgentModels(prev => ({
+        ...prev,
+        [puter.id]: [...PUTER_CURATED_MODEL_IDS],
+      }));
+    }
+  }, [providers]);
+
+  const fetchModelsForAgentProvider = async (targetProvider: typeof providers[0]) => {
+    if (!targetProvider) return;
+    setFetchingAgentModels(prev => ({ ...prev, [targetProvider.id]: true }));
+    const result = await ProviderManager.fetchModels(targetProvider as any);
+    setFetchingAgentModels(prev => ({ ...prev, [targetProvider.id]: false }));
+    if (result.ok && result.models.length > 0) {
+      setAgentModels(prev => ({ ...prev, [targetProvider.id]: result.models }));
+      toast.success(`Loaded ${result.models.length} models for ${targetProvider.name}`);
+    } else {
+      toast.error(result.error || `Failed to fetch models for ${targetProvider.name}`);
+    }
+  };
+
+  // Chain diagnostics state — Task 28: full per-link result is preserved
+  // (failure latency + rateLimited flag + provider message), no more zeroed
+  // latency / hover-only reasons.
+  const [testingChain, setTestingChain] = useState(false);
+  const [chainResults, setChainResults] = useState<Record<string, ChainLinkTestResult>>({});
+
+  // === FAILOVER SIMULATOR STATES ===
+  const [simulatingFailover, setSimulatingFailover] = useState(false);
+  const [failoverTrace, setFailoverTrace] = useState<Array<{ title: string; status: string; desc: string; type: "info" | "success" | "error" }>>([]);
+
+  const runFailoverSimulation = async () => {
+    setSimulatingFailover(true);
+    setFailoverTrace([]);
+
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+    // Step 1: Initiate call
+    setFailoverTrace([{ title: "Triggering API Request", status: "started", desc: "User initiated a resume optimization call. Routing to default provider...", type: "info" }]);
+    await delay(1000);
+
+    // Step 2: Primary failure
+    setFailoverTrace(prev => [...prev, {
+      title: `Connecting to Primary: ${defaultProvider?.name || "OpenAI"}`,
+      status: "failed",
+      desc: "API returned status code 429: Rate Limit Exceeded. Triggering failover policy...",
+      type: "error"
+    }]);
+    await delay(1200);
+
+    // Step 3: Check fallback count
+    if (fallbackProviders.length === 0) {
+      setFailoverTrace(prev => [...prev, {
+        title: "Routing Failure",
+        status: "aborted",
+        desc: "Failover aborted. No active fallback providers are configured in your routing settings.",
+        type: "error"
+      }]);
+      setSimulatingFailover(false);
+      return;
+    }
+
+    // Step 4: Cascade through fallbacks
+    for (let i = 0; i < fallbackProviders.length; i++) {
+      const p = fallbackProviders[i];
+      const isLast = i === fallbackProviders.length - 1;
+
+      if (!isLast) {
+        // Simulate a failure on intermediate fallbacks
+        setFailoverTrace(prev => [...prev, {
+          title: `Failover Tier ${i + 1}: ${p.name}`,
+          status: "failed",
+          desc: "API connection timed out after 3000ms. Escalating to next fallback tier...",
+          type: "error"
+        }]);
+        await delay(1200);
+      } else {
+        // Final fallback succeeds
+        setFailoverTrace(prev => [...prev, {
+          title: `Failover Tier ${i + 1}: ${p.name}`,
+          status: "success",
+          desc: `Successfully established connection to ${p.name}. Completed text generation in 840ms with score metrics.`,
+          type: "success"
+        }]);
+      }
+    }
+
+    setSimulatingFailover(false);
+  };
+
+  const applyPuterPreset = (preset: PuterAgentRoutingPreset) => {
+    const puterProv = providers.find((p) => p.type === "puter" || p.id === "p_puter");
+    if (!puterProv) {
+      toast.error("Puter.js provider not found in providers list. Please add Puter in AI Providers first.");
+      return;
+    }
+    const nextRoutes = { ...(form.agentRoutes || {}) };
+    const nextModelRoutes = { ...(form.agentModelRoutes || {}) };
+
+    for (const [agentKey, modelId] of Object.entries(preset.routes)) {
+      nextRoutes[agentKey] = puterProv.id;
+      nextModelRoutes[agentKey] = modelId;
+    }
+
+    update({
+      agentRoutes: nextRoutes,
+      agentModelRoutes: nextModelRoutes,
+      defaultProviderId: puterProv.id,
+      defaultModel: preset.routes.optimizer,
+    });
+    if (puterProv.modelName !== preset.routes.optimizer) {
+      updateProvider(puterProv.id, { modelName: preset.routes.optimizer });
+    }
+    toast.success(`Applied "${preset.name}". All 4 agents assigned to Puter.js models. Click Save Changes to persist.`);
+  };
+
+  const resetAgentRoutesToDefault = () => {
+    update({
+      agentRoutes: {
+        optimizer: "default",
+        supervisor: "default",
+        guardian: "default",
+        assembler: "default",
+      },
+      agentModelRoutes: {},
+    });
+    toast.info("Reset all agent routes to Default Fallback Chain. Click Save Changes to persist.");
+  };
+
+  const defaultProvider = providers.find((p) => p.id === form.defaultProviderId);
+  const fallbackProviders = form.fallbackProviderIds
+    .map((id) => providers.find((p) => p.id === id))
+    .filter(Boolean) as typeof providers;
+  const availableForFallback = providers.filter(
+    (p) => p.id !== form.defaultProviderId && !form.fallbackProviderIds.includes(p.id)
+  );
+
+  const update = (patch: Partial<typeof form>) => {
+    setForm({ ...form, ...patch });
+    setHasChanges(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    await new Promise((r) => setTimeout(r, 400));
+    updateProviderSettings(form);
+    setSaving(false);
+    setHasChanges(false);
+    toast.success("AI routing settings saved to D1.");
+  };
+
+  const fetchModels = async () => {
+    if (!defaultProvider) {
+      toast.error("Select a default provider first.");
+      return;
+    }
+    setFetchingModels(true);
+    const result = await ProviderManager.fetchModels(defaultProvider);
+    setFetchingModels(false);
+    if (result.ok && result.models.length > 0) {
+      setLiveModels(result.models);
+      toast.success(`Loaded ${result.models.length} ${defaultProvider.type === "puter" ? "live-catalog" : "live"} models from ${defaultProvider.name}.`);
+    } else {
+      toast.error(result.error || "Failed to fetch models. Your existing configuration is preserved.");
+    }
+  };
+
+  const handleTestChain = async () => {
+    setTestingChain(true);
+    setChainResults({});
+    
+    // Task 17 — mirror the runtime chain: demoted (isActive = false) links are
+    // excluded by the router's chain builder, so diagnostics skip them too.
+    // Probing them only produces misleading 429s (shared-egress quota) and, on
+    // CORS-hostile upstreams, browser-direct probe noise.
+    const providersToTest = [
+      defaultProvider,
+      ...fallbackProviders
+    ].filter(Boolean)
+      .filter((p) => p && p.isActive !== false) as typeof providers;
+
+    for (const p of providersToTest) {
+      setChainResults(prev => ({ ...prev, [p.id]: { ok: false, latencyMs: 0, phase: "testing" } }));
+      try {
+        const res = await ProviderManager.testConnection(p as any);
+        setChainResults(prev => ({
+          ...prev,
+          // Task 28 — keep the REAL diagnosis: failure latency, rateLimited
+          // flag (429 = reachable, key accepted) and the provider message.
+          [p.id]: {
+            ok: res.ok,
+            latencyMs: res.latencyMs ?? 0,
+            message: res.ok ? undefined : res.message,
+            rateLimited: (res as any)?.rateLimited === true,
+            phase: "done",
+          },
+        }));
+      } catch (err: any) {
+        setChainResults(prev => ({
+          ...prev,
+          [p.id]: { ok: false, latencyMs: 0, message: err?.message || "Connection error", phase: "done" },
+        }));
+      }
+    }
+    setTestingChain(false);
+    toast.success("AI Routing Chain diagnostics complete.");
+  };
+
+  const [prefetchingAll, setPrefetchingAll] = useState(false);
+  const handlePrefetchAllChainModels = async () => {
+    setPrefetchingAll(true);
+    const chain = [defaultProvider, ...fallbackProviders].filter(Boolean) as typeof providers;
+    let count = 0;
+    for (const p of chain) {
+      try {
+        setFetchingAgentModels((prev) => ({ ...prev, [p.id]: true }));
+        const res = await ProviderManager.fetchModels(p as any);
+        setFetchingAgentModels((prev) => ({ ...prev, [p.id]: false }));
+        if (res.ok && res.models.length > 0) {
+          setAgentModels((prev) => ({ ...prev, [p.id]: res.models }));
+          if (p.id === defaultProvider?.id) {
+            setLiveModels(res.models);
+          }
+          count++;
+        }
+      } catch (err) {
+        setFetchingAgentModels((prev) => ({ ...prev, [p.id]: false }));
+      }
+    }
+    setPrefetchingAll(false);
+    toast.success(`Prefetched models for ${count} chain provider${count === 1 ? "" : "s"}.`);
+  };
+
+  // === Import / Export ===
+  const exportConfig = () => {
+    const config = {
+      settings: form,
+      providers: providers.map((p) => ({
+        ...p,
+        apiKey: p.apiKey ? "***REDACTED***" : undefined,
+      })),
+      exportedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ai-routing-config-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Configuration exported.");
+  };
+
+  const importConfig = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const config = JSON.parse(text);
+        if (config.settings) {
+          setForm(config.settings);
+          setHasChanges(true);
+          toast.success("Configuration imported. Click 'Save' to apply.");
+        } else {
+          toast.error("Invalid config file — missing 'settings' key.");
+        }
+      } catch {
+        toast.error("Failed to parse config file.");
+      }
+    };
+    input.click();
+  };
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-bold flex items-center gap-2"><Icon name="Settings" className="w-6 h-6 text-brand" /> AI Routing Settings</h1>
+          <p className="text-sm text-muted-foreground mt-1">Configure default provider, model, fallback chain, and routing policy.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={importConfig} className="gap-1.5"><Icon name="Upload" className="w-3.5 h-3.5" /> Import</Button>
+          <Button variant="outline" size="sm" onClick={exportConfig} className="gap-1.5"><Icon name="Download" className="w-3.5 h-3.5" /> Export</Button>
+          <Button size="sm" onClick={save} disabled={!hasChanges || saving} className="bg-brand hover:bg-brand-dark text-white gap-1.5">
+            {saving ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="Save" className="w-3.5 h-3.5" />}
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+
+      {hasChanges && (
+        <div className="rounded-lg bg-amber-100 dark:bg-amber-400/10 border border-amber-300 p-3 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+          <Icon name="AlertTriangle" className="w-4 h-4" /> You have unsaved changes. Click "Save" to persist to D1.
+        </div>
+      )}
+
+      {/* Default Provider + Model */}
+      <Card>
+        <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Icon name="Star" className="w-4 h-4 text-gold" /> Default Provider & Model</CardTitle><CardDescription>The provider and model used first for every AI request.</CardDescription></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Default provider</Label>
+              <select
+                value={form.defaultProviderId ?? ""}
+                onChange={(e) => { update({ defaultProviderId: e.target.value || null }); setLiveModels([]); }}
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="">— None —</option>
+                {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Default model</Label>
+              <div className="flex gap-2">
+                {liveModels.length > 0 ? (
+                  <select
+                    value={form.defaultModel}
+                    onChange={(e) => update({ defaultModel: e.target.value })}
+                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm flex-1"
+                  >
+                    <option value="">— Select a model —</option>
+                    {liveModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                ) : defaultProvider && getPrebuiltModelsForProvider(defaultProvider.type) ? (
+                  <select
+                    value={form.defaultModel}
+                    onChange={(e) => update({ defaultModel: e.target.value })}
+                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm flex-1"
+                  >
+                    <option value="">— Select a curated model —</option>
+                    {getPrebuiltModelsForProvider(defaultProvider.type)!.map((group) => (
+                      <optgroup key={group.group} label={group.group}>
+                        {group.models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.label}{m.badge ? ` (${m.badge})` : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                ) : (
+                  <Input value={form.defaultModel} onChange={(e) => update({ defaultModel: e.target.value })} placeholder="claude-sonnet-4" className="flex-1" />
+                )}
+                {defaultProvider?.type === "puter" ? (
+                  <Button variant="outline" size="sm" onClick={fetchModels} disabled={fetchingModels} className="gap-1.5 shrink-0">
+                    {fetchingModels ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="List" className="w-3.5 h-3.5" />}
+                    Show live models
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={fetchModels} disabled={fetchingModels || !defaultProvider} className="gap-1.5 shrink-0">
+                    {fetchingModels ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="DownloadCloud" className="w-3.5 h-3.5" />}
+                    Fetch models
+                  </Button>
+                )}
+              </div>
+              {defaultProvider?.type === "puter" && liveModels.length === 0 && <p className="text-[10px] text-muted-foreground">Puter's live catalog is fetched from api.puter.com — click "Show live models" to load it (curated models ranked first).</p>}
+              {liveModels.length > 0 && <p className="text-[10px] text-muted-foreground">{liveModels.length} {defaultProvider?.type === "puter" ? "live-catalog" : "live"} models from {defaultProvider?.name}</p>}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Diagnostics Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <Icon name="Activity" className="w-4 h-4 text-emerald-500" /> 
+              Routing Chain Diagnostics
+            </span>
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <Button
+                onClick={handlePrefetchAllChainModels}
+                disabled={prefetchingAll || (!defaultProvider && fallbackProviders.length === 0)}
+                variant="outline"
+                size="sm"
+                className="text-xs gap-1.5"
+                title="Prefetch and cache available models for all providers currently in the routing chain"
+              >
+                {prefetchingAll ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="DownloadCloud" className="w-3.5 h-3.5 text-brand" />}
+                {prefetchingAll ? "Prefetching..." : "Prefetch All Models"}
+              </Button>
+              <Button 
+                onClick={handleTestChain} 
+                disabled={testingChain || (!defaultProvider && fallbackProviders.length === 0)}
+                variant="outline" 
+                size="sm"
+                className="text-xs gap-1.5"
+              >
+                {testingChain ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="Play" className="w-3.5 h-3.5 text-brand" />}
+                {testingChain ? "Testing..." : "Test Entire Chain"}
+              </Button>
+            </div>
+          </CardTitle>
+          <CardDescription>
+            Simulate live API calls to verify credentials, check latency, and ensure failover resilience across your configuration.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {defaultProvider && (
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-secondary/30 text-xs border border-border">
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">Primary</Badge>
+                <span className="font-semibold">{defaultProvider.name}</span>
+                <span className="text-muted-foreground font-mono">({form.defaultModel || "no model"})</span>
+              </div>
+              <div className="flex flex-col items-end gap-0.5">
+                {defaultProvider.isActive === false ? (
+                  <span className="text-amber-500 font-medium" title="Demoted providers are excluded from the live routing chain — the router never sends them traffic.">Demoted — excluded from live chain</span>
+                ) : chainResults[defaultProvider.id] ? (
+                  <ChainLinkStatus result={chainResults[defaultProvider.id]} />
+                ) : (
+                  <span className="text-muted-foreground">Not tested</span>
+                )}
+              </div>
+            </div>
+          )}
+          {fallbackProviders.map((p, idx) => (
+            <div key={p.id} className="flex items-center justify-between p-2.5 rounded-lg bg-secondary/10 text-xs border border-border">
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">Fallback #{idx + 1}</Badge>
+                <span className="font-semibold">{p.name}</span>
+                <span className="text-muted-foreground font-mono">({p.modelName || "no model"})</span>
+              </div>
+              <div className="flex flex-col items-end gap-0.5">
+                {p.isActive === false ? (
+                  <span className="text-amber-500 font-medium" title="Demoted providers are excluded from the live routing chain — the router never sends them traffic.">Demoted — excluded from live chain</span>
+                ) : chainResults[p.id] ? (
+                  <ChainLinkStatus result={chainResults[p.id]} />
+                ) : (
+                  <span className="text-muted-foreground">Not tested</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {!defaultProvider && fallbackProviders.length === 0 && (
+            <div className="text-xs text-muted-foreground text-center py-4 border border-dashed border-border rounded-lg">
+              Set up a primary or fallback provider to run diagnostics.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Fallback Chain */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Icon name="Layers" className="w-4 h-4 text-brand" /> Fallback Chain
+              </CardTitle>
+              <CardDescription>Providers tried in order if the default fails. Assign specific rescue models and prefetch live options.</CardDescription>
+            </div>
+            {fallbackProviders.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handlePrefetchAllChainModels}
+                disabled={prefetchingAll}
+                className="text-xs gap-1.5 self-start sm:self-auto shrink-0"
+              >
+                {prefetchingAll ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="DownloadCloud" className="w-3.5 h-3.5 text-brand" />}
+                Prefetch Chain Models
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {fallbackProviders.length === 0 && (
+            <div className="text-sm text-muted-foreground text-center py-4 rounded-lg border border-dashed border-border">No fallback providers configured.</div>
+          )}
+          {fallbackProviders.map((p, i) => {
+            const prebuilt = getPrebuiltModelsForProvider(p.type);
+            const prebuiltIds = new Set(prebuilt ? prebuilt.flatMap((g) => g.models.map((m) => m.id)) : []);
+            const cached = agentModels[p.id] || [];
+            const extraModels = cached.filter((m) => !prebuiltIds.has(m));
+            const isFetchingThis = !!fetchingAgentModels[p.id];
+
+            return (
+              <div key={p.id} className="p-3 rounded-lg border border-border bg-card space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-brand text-white flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm truncate flex items-center gap-2">
+                      {p.name}
+                      <Badge variant="outline" className="text-[10px] uppercase">{p.type.replace("-", " ")}</Badge>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="sm" variant="ghost" disabled={i === 0} onClick={() => { const ids = [...form.fallbackProviderIds]; [ids[i-1], ids[i]] = [ids[i], ids[i-1]]; update({ fallbackProviderIds: ids }); }} title="Move up in priority">
+                      <Icon name="ChevronUp" className="w-4 h-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={i === fallbackProviders.length - 1} onClick={() => { const ids = [...form.fallbackProviderIds]; [ids[i+1], ids[i]] = [ids[i], ids[i+1]]; update({ fallbackProviderIds: ids }); }} title="Move down in priority">
+                      <Icon name="ChevronDown" className="w-4 h-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => update({ fallbackProviderIds: form.fallbackProviderIds.filter((fid) => fid !== p.id) })} title="Remove from fallback chain">
+                      <Icon name="X" className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Model Selector & Prefetch for this Fallback Link */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1 border-t border-border/40 text-xs">
+                  <div className="flex items-center justify-between sm:justify-start gap-2 min-w-[130px]">
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Fallback Model:</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      onClick={() => fetchModelsForAgentProvider(p)}
+                      disabled={isFetchingThis}
+                      className="h-6 px-2 text-[11px] text-brand hover:text-brand-dark gap-1"
+                      title={`Fetch live model catalog for ${p.name}`}
+                    >
+                      {isFetchingThis ? <Icon name="Loader2" className="w-3 h-3 animate-spin" /> : <Icon name="RefreshCw" className="w-3 h-3" />}
+                      Prefetch
+                    </Button>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <select
+                      value={p.modelName || ""}
+                      onChange={(e) => {
+                        const newModel = e.target.value;
+                        updateProvider(p.id, { modelName: newModel });
+                        toast.success(`Assigned fallback model "${newModel}" to ${p.name}`);
+                      }}
+                      className="w-full h-8 px-2.5 rounded-md border border-input bg-background text-xs font-mono"
+                    >
+                      <option value="">— Select Fallback Model —</option>
+                      {p.modelName && !prebuiltIds.has(p.modelName) && !extraModels.includes(p.modelName) && (
+                        <option value={p.modelName}>{p.modelName} (current active)</option>
+                      )}
+                      {prebuilt ? (
+                        <>
+                          {prebuilt.map((group) => (
+                            <optgroup key={group.group} label={group.group}>
+                              {group.models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}{m.badge ? ` [${m.badge}]` : ""}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                          {extraModels.length > 0 && (
+                            <optgroup label="🌐 Live Discovered Models">
+                              {extraModels.map((m) => (
+                                <option key={m} value={m}>{m}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </>
+                      ) : cached.length > 0 ? (
+                        cached.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))
+                      ) : (
+                        <option value={p.modelName || ""}>{p.modelName || "Default model"}</option>
+                      )}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {availableForFallback.length > 0 && (
+            <div className="pt-2 border-t border-border">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Add to fallback chain</Label>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {availableForFallback.map((p) => (
+                  <button key={p.id} onClick={() => update({ fallbackProviderIds: [...form.fallbackProviderIds, p.id] })} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border bg-card hover:bg-secondary text-xs">
+                    <Icon name="Plus" className="w-3 h-3" /> {p.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Agent Routing Matrix */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Icon name="Network" className="w-5 h-5 text-brand" /> Agent Routing Matrix
+          </CardTitle>
+          <CardDescription>
+            Bind individual AI agent roles to specific LLM models or API providers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* 1-Click Puter.js Agent Presets Toolbar */}
+          <div className="p-3.5 rounded-xl border border-amber-500/25 bg-amber-500/5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                    <Icon name="Sparkles" className="w-3.5 h-3.5 text-amber-500" />
+                    One-Click Puter.js Agent Presets
+                  </span>
+                  <span className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium border border-amber-500/30">
+                    Client-side .js · Free & Keyless
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Assign verified, stable models to the 4 pipeline agents via Puter.js (runs in-browser via Puter.js, no API key needed). Preserves all other custom providers.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                onClick={resetAgentRoutesToDefault}
+                className="text-[11px] text-muted-foreground hover:text-foreground h-7 px-2 self-start sm:self-center"
+              >
+                <Icon name="RotateCcw" className="w-3 h-3 mr-1" /> Reset to Default
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              {PUTER_AGENT_PRESETS.map((preset) => {
+                const puterProv = providers.find((p) => p.type === "puter" || p.id === "p_puter");
+                const isCurrentlyActive = !!(puterProv &&
+                  form.agentRoutes?.optimizer === puterProv.id &&
+                  form.agentModelRoutes?.optimizer === preset.routes.optimizer &&
+                  form.agentRoutes?.supervisor === puterProv.id &&
+                  form.agentModelRoutes?.supervisor === preset.routes.supervisor);
+
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyPuterPreset(preset)}
+                    className={`flex flex-col text-left p-2.5 rounded-lg border transition-all text-xs group ${
+                      isCurrentlyActive
+                        ? "border-amber-500 bg-amber-500/15 shadow-sm ring-1 ring-amber-500/30"
+                        : "border-border/70 hover:border-amber-500/50 bg-background/80 hover:bg-amber-500/10"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full font-medium text-foreground group-hover:text-amber-600 dark:group-hover:text-amber-400">
+                      <span>{preset.shortLabel}</span>
+                      {preset.badge && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 font-semibold">
+                          {preset.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2 leading-relaxed">
+                      {preset.description}
+                    </p>
+                    <div className="mt-2 pt-1.5 border-t border-border/40 text-[9px] text-muted-foreground font-mono space-y-0.5">
+                      <div>Opt: <span className="text-foreground">{preset.routes.optimizer}</span></div>
+                      <div>Sup: <span className="text-foreground">{preset.routes.supervisor}</span></div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            {[
+              { key: "optimizer", label: "Optimizer Specialist Agent", desc: "Rewrites and expands experience, skills, and summary sections." },
+              { key: "supervisor", label: "Supervisor QA Agent", desc: "Validates compliance, orchestrates correction cycles, and scores outputs." },
+              { key: "guardian", label: "Guardian Check Agent", desc: "Checks formatting, ensures entity preservation, and prevents hallucinations." },
+              { key: "assembler", label: "Structure Assembler Agent", desc: "Compiles section outputs, removes duplicates, and standardizes layout." }
+            ].map((agent) => {
+              const currentRoute = form.agentRoutes?.[agent.key] ?? "default";
+              const currentModel = form.agentModelRoutes?.[agent.key] ?? "";
+              const routedProvider = providers.find((p) => p.id === currentRoute);
+              const isPuter = routedProvider?.type === "puter";
+              const cachedModels = agentModels[currentRoute] || [];
+              const isFetching = !!fetchingAgentModels[currentRoute];
+
+              return (
+                <div key={agent.key} className="p-3 border border-border rounded-lg space-y-2.5 bg-secondary/5">
+                  <div>
+                    <Label htmlFor={`route_${agent.key}`} className="font-semibold text-sm">{agent.label}</Label>
+                    <p className="text-[10px] text-muted-foreground leading-normal mt-0.5">{agent.desc}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <div>
+                      <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Provider</Label>
+                      <select
+                        id={`route_${agent.key}`}
+                        value={currentRoute}
+                        onChange={(e) => {
+                          const nextRoutes = { ...(form.agentRoutes || {}) };
+                          const nextProviderId = e.target.value;
+                          nextRoutes[agent.key] = nextProviderId;
+
+                          // If switching away or to default, clear custom model route unless new provider has existing model
+                          const nextModelRoutes = { ...(form.agentModelRoutes || {}) };
+                          if (nextProviderId === "default") {
+                            delete nextModelRoutes[agent.key];
+                          } else {
+                            const newProv = providers.find(p => p.id === nextProviderId);
+                            nextModelRoutes[agent.key] = newProv?.modelName || "";
+                            // Automatically trigger model fetch if not already loaded
+                            if (newProv && !agentModels[newProv.id]) {
+                              fetchModelsForAgentProvider(newProv);
+                            }
+                          }
+                          update({ agentRoutes: nextRoutes, agentModelRoutes: nextModelRoutes });
+                        }}
+                        className="w-full h-9 px-2 rounded-md border border-input bg-background text-xs mt-1"
+                      >
+                        <option value="default">Default Fallback Chain (Tier-Limited)</option>
+                        {providers.map((p) => {
+                          const activeModelForAgent = (p.id === currentRoute && currentModel) ? currentModel : (p.modelName || p.type);
+                          return (
+                            <option key={p.id} value={p.id}>{p.name} ({activeModelForAgent})</option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    {currentRoute !== "default" && routedProvider && (
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Assigned Model</Label>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              type="button"
+                              onClick={() => setCustomModelMode((prev) => ({ ...prev, [agent.key]: !prev[agent.key] }))}
+                              className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                              title={customModelMode[agent.key] ? "Choose from curated list" : "Enter custom model ID"}
+                            >
+                              <Icon name={customModelMode[agent.key] ? "List" : "Edit3"} className="w-2.5 h-2.5" />
+                              {customModelMode[agent.key] ? "Curated list" : "Custom"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              type="button"
+                              onClick={() => fetchModelsForAgentProvider(routedProvider)}
+                              disabled={isFetching}
+                              className="h-5 px-1.5 text-[10px] text-brand hover:text-brand-dark gap-1"
+                            >
+                              {isFetching ? <Icon name="Loader2" className="w-2.5 h-2.5 animate-spin" /> : <Icon name="RefreshCw" className="w-2.5 h-2.5" />}
+                              {isPuter ? "Fetch live" : "Fetch"}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="mt-1">
+                          {customModelMode[agent.key] ? (
+                            <Input
+                              value={currentModel || routedProvider.modelName || ""}
+                              onChange={(e) => {
+                                const nextModelRoutes = { ...(form.agentModelRoutes || {}) };
+                                nextModelRoutes[agent.key] = e.target.value;
+                                update({ agentModelRoutes: nextModelRoutes });
+                              }}
+                              placeholder={routedProvider.modelName || "model-name"}
+                              className="w-full h-8 text-xs font-mono"
+                            />
+                          ) : (
+                            <select
+                              value={currentModel || routedProvider.modelName || ""}
+                              onChange={(e) => {
+                                if (e.target.value === "__CUSTOM__") {
+                                  setCustomModelMode((prev) => ({ ...prev, [agent.key]: true }));
+                                  return;
+                                }
+                                const nextModelRoutes = { ...(form.agentModelRoutes || {}) };
+                                nextModelRoutes[agent.key] = e.target.value;
+                                update({ agentModelRoutes: nextModelRoutes });
+                              }}
+                              className="w-full h-8 px-2 rounded-md border border-input bg-background text-xs"
+                            >
+                              {(() => {
+                                const prebuilt = getPrebuiltModelsForProvider(routedProvider.type);
+                                const prebuiltIds = new Set(prebuilt ? prebuilt.flatMap((g) => g.models.map((m) => m.id)) : []);
+                                const extraModels = cachedModels.filter((m) => !prebuiltIds.has(m));
+                                const activeVal = currentModel || routedProvider.modelName || "";
+                                const isUnlisted = activeVal && !prebuiltIds.has(activeVal) && !extraModels.includes(activeVal);
+
+                                return (
+                                  <>
+                                    {isUnlisted && (
+                                      <option value={activeVal}>{activeVal} (current custom)</option>
+                                    )}
+                                    {prebuilt ? (
+                                      <>
+                                        {prebuilt.map((group) => (
+                                          <optgroup key={group.group} label={group.group}>
+                                            {group.models.map((m) => (
+                                              <option key={m.id} value={m.id}>
+                                                {m.label}{m.badge ? ` [${m.badge}]` : ""}
+                                              </option>
+                                            ))}
+                                          </optgroup>
+                                        ))}
+                                        {extraModels.length > 0 && (
+                                          <optgroup label={isPuter ? "🌐 More Live Puter Models" : "📋 Discovered Models"}>
+                                            {extraModels.map((m) => (
+                                              <option key={m} value={m}>{m}</option>
+                                            ))}
+                                          </optgroup>
+                                        )}
+                                      </>
+                                    ) : cachedModels.length > 0 ? (
+                                      cachedModels.map((m) => (
+                                        <option key={m} value={m}>{m}</option>
+                                      ))
+                                    ) : (
+                                      <option value={routedProvider.modelName || ""}>
+                                        {routedProvider.modelName || "Default model"}
+                                      </option>
+                                    )}
+                                    <option value="__CUSTOM__">✏️ Enter custom model ID...</option>
+                                  </>
+                                );
+                              })()}
+                            </select>
+                          )}
+                        </div>
+
+                        {isPuter && (
+                          <div className="mt-1.5 flex items-center gap-1.5 text-[9.5px] text-amber-700 dark:text-amber-300/90 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
+                            <Icon name="Sparkles" className="w-3 h-3 text-amber-500 shrink-0" />
+                            <span>Runs client-side via <strong>Puter.js</strong> (no API key). Active Puter browser session required.</span>
+                          </div>
+                        )}
+
+                        {cachedModels.length > 0 && (
+                          <p className="text-[9px] text-muted-foreground mt-0.5">
+                            {cachedModels.length} models available from {routedProvider.name}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Retry & Timeout */}
+      <Card>
+        <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Icon name="Timer" className="w-4 h-4 text-gold" /> Retry & Timeout</CardTitle></CardHeader>
+        <CardContent className="grid sm:grid-cols-3 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Retry attempts</Label>
+            <Input type="number" min="0" max="5" value={form.retryAttempts} onChange={(e) => update({ retryAttempts: parseInt(e.target.value) || 0 })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Timeout (ms)</Label>
+            <Input type="number" value={form.timeout} onChange={(e) => update({ timeout: parseInt(e.target.value) || 30000 })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Rate limit (req/min)</Label>
+            <Input type="number" value={form.rateLimitPerMinute} onChange={(e) => update({ rateLimitPerMinute: parseInt(e.target.value) || 60 })} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Feature toggles */}
+      <Card>
+        <CardHeader><CardTitle className="text-lg">Routing features</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          <ToggleRow label="Enable failover" desc="Automatically try the next provider when one fails" checked={form.enableFailover} onChange={(v) => update({ enableFailover: v })} />
+          <ToggleRow label="Enable response caching" desc="Cache identical prompts for 1 hour to save tokens" checked={form.enableCaching} onChange={(v) => update({ enableCaching: v })} />
+          <ToggleRow label="Enable cost tracking" desc="Track token usage and estimate cost per provider" checked={form.enableCostTracking} onChange={(v) => update({ enableCostTracking: v })} />
+        </CardContent>
+      </Card>
+
+      {/* Dynamic Failover Simulation Sandbox */}
+      <Card className="border-amber-500/20 bg-amber-500/[0.02]">
+        <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Icon name="Activity" className="w-5 h-5 text-amber-500 animate-pulse" />
+              Dynamic Failover Simulation Sandbox
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Simulate a primary API failure (e.g., 429 Rate Limit) to test and visually trace your fallback chain routing in real-time.
+            </CardDescription>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={simulatingFailover}
+            onClick={runFailoverSimulation}
+            className="border-amber-500/30 hover:bg-amber-500/10 font-semibold"
+          >
+            {simulatingFailover ? (
+              <>
+                <Icon name="Loader2" className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                Simulating...
+              </>
+            ) : (
+              <>
+                <Icon name="Play" className="w-3.5 h-3.5 mr-1.5 text-amber-500" />
+                Simulate Primary Failure
+              </>
+            )}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4 text-xs">
+          <div className="flex flex-wrap gap-4 items-center border-b border-border pb-3">
+            <div>
+              <span className="text-muted-foreground">Primary Provider:</span>{" "}
+              <span className="font-semibold text-foreground/90">{defaultProvider?.name || "None"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Active Fallback Chain:</span>{" "}
+              <span className="font-semibold text-foreground/90">{fallbackProviders.map(p => p.name).join(" → ") || "None (Default to failure)"}</span>
+            </div>
+          </div>
+
+          {/* Simulation Trace Timeline */}
+          {failoverTrace.length > 0 ? (
+            <div className="space-y-3 border-l border-amber-300 dark:border-amber-700 pl-4 ml-2 mt-2">
+              {failoverTrace.map((trace, idx) => (
+                <div key={idx} className="relative flex flex-col gap-1 text-xs animate-fadeIn">
+                  <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-amber-500 border border-background" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-foreground/90">{trace.title}</span>
+                    <Badge variant={trace.type === "success" ? "success" : trace.type === "error" ? "danger" : "warning"} className="text-[8px] uppercase tracking-wider px-1 py-0.5">
+                      {trace.status}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">{trace.desc}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-4 bg-secondary/10 rounded border border-dashed border-border text-muted-foreground">
+              Click "Simulate Primary Failure" to trace the failover cascading logic.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Sticky save bar */}
+      {hasChanges && (
+        <div className="sticky bottom-4 z-30 flex justify-end">
+          <Button onClick={save} disabled={saving} className="bg-brand hover:bg-brand-dark text-white gap-2 shadow-premium">
+            {saving ? <Icon name="Loader2" className="w-4 h-4 animate-spin" /> : <Icon name="Save" className="w-4 h-4" />}
+            {saving ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToggleRow({ label, desc, checked, onChange }: { label: string; desc: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border">
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-muted-foreground">{desc}</div>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+/**
+ * Task 28 — shared renderer for one Routing Chain Diagnostics link.
+ * Replaces the old bare "Unhealthy" ternary: every failure now shows an
+ * inline actionable diagnosis (HTTP status · latency · class hint · message
+ * excerpt) with the full provider message on hover / to screen readers.
+ * HTTP 429 renders as amber "Rate-limited" (provider reachable, key accepted).
+ */
+function ChainLinkStatus({ result }: { result: ChainLinkTestResult }) {
+  const d = chainLinkDisplay(result);
+  if (d.state === "testing") {
+    return <span className={d.toneClass}>{d.headline}</span>;
+  }
+  if (d.state === "healthy") {
+    return (
+      <span className={`flex items-center gap-1 ${d.toneClass}`}>
+        <Icon name="Check" className="w-3.5 h-3.5" /> {d.headline} ({d.latencyMs}ms)
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-col items-end gap-0.5 text-right">
+      <span className={`flex items-center gap-1 ${d.toneClass}`} title={d.fullMessage}>
+        <Icon name={d.state === "rate-limited" ? "Clock" : "X"} className="w-3.5 h-3.5" />
+        {d.headline}
+        {d.latencyMs > 0 ? ` (${d.latencyMs}ms)` : ""}
+      </span>
+      <span className="text-[10px] leading-snug text-muted-foreground max-w-[420px]" title={d.fullMessage}>
+        {d.detailLine}
+      </span>
+    </div>
+  );
+}

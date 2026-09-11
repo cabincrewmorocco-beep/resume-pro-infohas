@@ -1,0 +1,1150 @@
+import { recordAI, setFlightScope } from "@/lib/ai/flight-recorder";
+setFlightScope({ scope: "ats-analysis", feature: "ATS Directives", module: "src.lib.ats-directives" });
+// ResumeAI Pro — Aviation-focused ATS directives & helpers
+//
+// This module contains:
+//   1. CABIN_CREW_KEYWORDS  — aviation/cabin-crew keyword bank for ATS matching
+//   2. AVIATION_KEYWORDS    — broader aviation keyword bank
+//   3. AIRLINE_ATS_PROFILES — per-airline ATS system configs (Emirates, Qatar, Etihad, …)
+//   4. AppSettings          — tone / format / strictness settings for the optimizer
+//   5. analyzeWithGemini()  — AI function that produces a scored, optimized HTML resume
+//   6. getAviationOptimizerDirective() — unified directive that merges super-admin
+//      optimizer config with aviation keyword bank + airline profile (returns JSON)
+//   7. aviationOptimize()   — AI call using the unified directive (returns structured JSON)
+//   8. getDocxHtml()        — strict A4 one-page HTML wrapper for .doc/.docx export
+//
+// analyzeWithGemini() routes through our existing recordAI() gateway (Puter → server → local),
+// so it inherits the full failover chain. The "Gemini" name is preserved for compatibility
+// with the original spec — in practice any provider can serve it.
+
+import { callAI, extractJSON, OPTIMIZER_CALL_TIMEOUT_MS } from "./ai";
+import { splitOptimizationDirective } from "./ai-diagnostics";
+import { INDUSTRY_PROFILES } from "./industry-ats";
+import type { OptimizerDirectiveConfig, ResumeData } from "./types";
+import { useApp } from "./store";
+import { getDirective } from "./optimizer-directive-engine";
+
+// ============================================================================
+// 1. KEYWORD BANKS
+// ============================================================================
+
+export const CABIN_CREW_KEYWORDS = `
+  Technical: Cabin Crew Attestation (CCA), CPR/AED Certified, Aviation First Aid, SEP (Safety and Emergency Procedures), Aircraft Type Qualifications (e.g., A380, B787), Cabin Crew Medical.
+  Safety: Emergency Evacuation, Dangerous Goods Regulations (DGR), In-flight Firefighting, Ditching Procedures, Pre-flight Safety Checks, Aviation Security (AVSEC).
+  Operational: CRM (Crew Resource Management), In-flight Service Delivery, Galley Management, Passenger Announcements (PA), Turnaround Operations, Special Handling (UMNR, PRM).
+  Soft Skills: Customer Service Excellence, Conflict Resolution, Cultural Awareness, De-escalation, Decision Making Under Pressure, Situational Awareness.
+`;
+
+export const AVIATION_KEYWORDS = `
+  Technical: Cabin Crew Attestation (CCA), ATP Certificate, Type Ratings (A320, B737, B777, B787, A350, A380), CRM Certification, Aviation First Aid, CPR/AED, SEP (Safety and Emergency Procedures), Aircraft Type Qualifications, Cabin Crew Medical, ICAO Language Proficiency (Level 4+).
+  Safety: Emergency Evacuation, Dangerous Goods Regulations (DGR), In-flight Firefighting, Ditching Procedures, Pre-flight Safety Checks, Aviation Security (AVSEC), Smoke Removal, Rapid Decompression, Cabin Pressurization.
+  Operational: Crew Resource Management (CRM), In-flight Service Delivery, Galley Management, Passenger Announcements (PA), Turnaround Operations, Special Handling (UMNR, PRM, CIP), Duty-Free Sales, Cash & Card Handling, Passenger Boarding, Disembarkation Procedures.
+  Service: Customer Service Excellence, Conflict Resolution, Cultural Awareness, De-escalation, Decision Making Under Pressure, Situational Awareness, Multicultural Team Collaboration, Premium Cabin Service, Fine Dining Service, Beverage Service.
+  Regulatory: EASA Part-CC, FAA Part 121/135, CAA CAP 789, ICAO Annex 6, IATA DGR, Aviation Audits (IOSA), Safety Management Systems (SMS).
+  Languages: English (ICAO Level 4+), Arabic, French, German, Spanish, Mandarin, Hindi, Urdu — cross-cultural communication.
+`;
+
+// ============================================================================
+// 2. AIRLINE ATS PROFILES
+// ============================================================================
+
+export interface AirlineAtsProfile {
+  system: string;
+  focus: string;
+  // Keywords the airline's ATS specifically weights
+  priorityKeywords?: string[];
+  // Tone preference
+  tone?: "Formal" | "Balanced" | "Warm" | "Premium";
+}
+
+export const AIRLINE_ATS_PROFILES: Record<string, AirlineAtsProfile> = {
+  emirates: {
+    system: "Emirates Group Talent ATS (Oracle Recruiting Cloud)",
+    focus: "Multicultural service excellence, premium cabin experience, Dubai-based global operations, SEP safety rules",
+    priorityKeywords: ["Multicultural", "Premium Service", "Diversity", "Global Mindset", "Excellence", "Hospitality", "Luxury", "Etiquette", "SEP", "CRM"],
+    tone: "Premium",
+  },
+  qatar: {
+    system: "Qatar Airways Talent ATS (Cazar)",
+    focus: "Five-star service, fast-paced hub operations, Doha connectivity, award-winning cabin crew, Sonru video screen",
+    priorityKeywords: ["Five-Star", "Award-Winning", "Service Excellence", "Hub Operations", "Diversity", "Premium", "Hospitality", "Service Recovery", "Sonru"],
+    tone: "Formal",
+  },
+  etihad: {
+    system: "Etihad Aviation Group ATS (Oracle Cloud HCM)",
+    focus: "Abu Dhabi flagship carrier, premium product, cabin crew inflight innovation, assessment center tasks",
+    priorityKeywords: ["Innovation", "Premium", "Choose Well", "Hospitality", "UAE National", "Service Excellence", "Cabin Safety", "Crew Cohesion"],
+    tone: "Balanced",
+  },
+  gulf: {
+    system: "Gulf Air Talent ATS (Oracle)",
+    focus: "Gulf Air national flag carrier operations, regional passenger service excellence, security compliance",
+    priorityKeywords: ["Safety Compliance", "Passenger Service", "Gulf Operations", "Crew Synergy", "SEP", "Hospitality"],
+    tone: "Formal",
+  },
+  saudia: {
+    system: "Saudia Careers Portal (Oracle)",
+    focus: "Saudia flight operations, Haj and Umrah passenger handling, premium hospitality standards",
+    priorityKeywords: ["Haj Operations", "Premium Hospitality", "Safety Standards", "Operational Safety", "Arabic/English"],
+    tone: "Formal",
+  },
+  oman: {
+    system: "Oman Air Recruitment (Enterprise ATS)",
+    focus: "Oman Air boutique carrier operations, Muscat hub connectivity, authentic Omani hospitality",
+    priorityKeywords: ["Boutique Service", "Muscat Hub", "Passenger Care", "Safety Compliance", "Hospitality"],
+    tone: "Balanced",
+  },
+  kuwait: {
+    system: "Kuwait Airways Recruitment Portal (Enterprise)",
+    focus: "Kuwait Airways flag carrier operations, customer service, safety standards",
+    priorityKeywords: ["Flag Carrier", "Customer Service", "Cabin Safety", "CRM", "Passenger Assistance"],
+    tone: "Balanced",
+  },
+  arabia: {
+    system: "Air Arabia Careers ATS (Enterprise)",
+    focus: "Low-cost carrier efficiency, multi-hub operations, fast turnaround times, safety compliance",
+    priorityKeywords: ["LCC Operations", "Efficiency", "Fast Turnaround", "Punctuality", "Safety", "Cost Control"],
+    tone: "Balanced",
+  },
+  flydubai: {
+    system: "flydubai Recruitment Portal (Enterprise)",
+    focus: "Dubai connectivity, modern Boeing operations, flexible service, rapid growth safety",
+    priorityKeywords: ["Dubai Hub", "Boeing Operations", "Safety Regulations", "Customer Service", "Adaptability"],
+    tone: "Balanced",
+  },
+  riyadh: {
+    system: "Riyadh Air Talent Acquisition (Enterprise Cloud)",
+    focus: "Brand new airline operations, futuristic guest services, digital-first hospitality, Riyadh hub",
+    priorityKeywords: ["Futuristic Services", "Digital-First", "Guest Experience", "Brand Ambassador", "Safety Compliance"],
+    tone: "Premium",
+  },
+  lufthansa: {
+    system: "Lufthansa Group ATS (SAP SuccessFactors)",
+    focus: "German engineering precision, European network, Star Alliance integration, safety-first",
+    priorityKeywords: ["Precision", "Safety-First", "Star Alliance", "German", "Engineering", "Reliability", "Efficiency"],
+    tone: "Formal",
+  },
+  ryanair: {
+    system: "Ryanair Careers ATS",
+    focus: "Low-cost carrier efficiency, fast turnarounds, high-volume operations, punctuality",
+    priorityKeywords: ["Efficiency", "Punctuality", "Fast Turnaround", "Low-Cost", "High-Volume", "On-Time Performance"],
+    tone: "Balanced",
+  },
+  singapore: {
+    system: "Singapore Airlines ATS (Workday)",
+    focus: "Singapore Girl service standard, Asian hospitality, ultra-long-haul operations, premium cabins",
+    priorityKeywords: ["Asian Hospitality", "Singapore Girl", "Premium", "Ultra-Long-Haul", "Service Excellence", "Refinement"],
+    tone: "Premium",
+  },
+  airfrance: {
+    system: "Air France-KLM ATS",
+    focus: "French service elegance, dual-hub (CDG/AMS), SkyTeam integration, premium leisure",
+    priorityKeywords: ["Elegance", "French", "SkyTeam", "Premium Leisure", "Hospitality", "Bilingual"],
+    tone: "Premium",
+  },
+  british: {
+    system: "British Airways ATS (Workday)",
+    focus: "British heritage service, London hub, premium long-haul, oneworld alliance",
+    priorityKeywords: ["Heritage", "British", "Premium", "Oneworld", "Long-Haul", "Service Excellence"],
+    tone: "Formal",
+  },
+  generic: {
+    system: "Generic ATS (Workday / SuccessFactors / Taleo compatible)",
+    focus: "General aviation keyword matching, standard cabin crew competency framework",
+    priorityKeywords: [],
+    tone: "Balanced",
+  },
+};
+
+export const AIRLINE_OPTIONS = [
+  { id: "generic", label: "Generic / Multi-Airline", icon: "Globe" },
+  { id: "emirates", label: "Emirates", icon: "Plane" },
+  { id: "qatar", label: "Qatar Airways", icon: "Plane" },
+  { id: "etihad", label: "Etihad Airways", icon: "Plane" },
+  { id: "gulf", label: "Gulf Air", icon: "Plane" },
+  { id: "saudia", label: "Saudia", icon: "Plane" },
+  { id: "oman", label: "Oman Air", icon: "Plane" },
+  { id: "kuwait", label: "Kuwait Airways", icon: "Plane" },
+  { id: "arabia", label: "Air Arabia", icon: "Plane" },
+  { id: "flydubai", label: "flydubai", icon: "Plane" },
+  { id: "riyadh", label: "Riyadh Air", icon: "Plane" },
+  { id: "lufthansa", label: "Lufthansa Group", icon: "Plane" },
+  { id: "ryanair", label: "Ryanair", icon: "Plane" },
+  { id: "singapore", label: "Singapore Airlines", icon: "Plane" },
+  { id: "airfrance", label: "Air France-KLM", icon: "Plane" },
+  { id: "british", label: "British Airways", icon: "Plane" },
+];
+
+// ============================================================================
+// 3. APP SETTINGS (tone / format / strictness)
+// ============================================================================
+
+export interface AppSettings {
+  tone: "Formal" | "Balanced" | "Warm" | "Premium" | "Aggressive";
+  format: "Chronological" | "Functional" | "Hybrid" | "Combination";
+  strictness: "Conservative" | "Balanced" | "Aggressive";
+}
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  tone: "Balanced",
+  format: "Chronological",
+  strictness: "Balanced",
+};
+
+// ============================================================================
+// 4. analyzeWithGemini — aviation-aware ATS optimization
+// ============================================================================
+
+export interface AviationAtsResult {
+  score: number;
+  score_breakdown: { impact: number; brevity: number; keywords: number };
+  summary_critique: string;
+  missing_keywords: string[];
+  matched_keywords: string[];
+  optimized_content: string; // HTML
+}
+
+/**
+ * Aviation-aware ATS optimization. Uses the directive prompt with airline-specific
+ * ATS profile, aviation keyword bank, tone/format/strictness settings, and strict
+ * 2,800-character / one-A4-page enforcement.
+ *
+ * Routes through recordAI() (Puter → server → local) for full failover.
+ */
+export async function analyzeWithGemini(
+  resumeText: string,
+  jobDescription: string,
+  settings: AppSettings,
+  airlineProfile: string
+): Promise<AviationAtsResult> {
+  try {
+    const toneInstruction = settings?.tone || "Balanced";
+    const formatInstruction = settings?.format || "Chronological";
+    const strictnessInstruction = settings?.strictness === "Aggressive"
+      ? "MAXIMUM keyword stuffing."
+      : "Balanced optimization.";
+    const atsSystem = airlineProfile ? (AIRLINE_ATS_PROFILES[airlineProfile]?.system || "Generic ATS") : "Generic ATS";
+    const atsFocus = airlineProfile ? (AIRLINE_ATS_PROFILES[airlineProfile]?.focus || "General") : "General";
+
+    const prompt = `
+      ACT AS: Expert Recruiter, Senior ATS Consultant, and Master Resume Strategist.
+
+      OBJECTIVE: Deeply analyze the resume and job description, then produce a highly optimized recruiter-grade resume that maximizes ATS compatibility while remaining 100% factual.
+
+      ═══════════════════════════════════════════════════════════
+      MULTI-STAGE REASONING PIPELINE (THINK BEFORE WRITING)
+      ═══════════════════════════════════════════════════════════
+
+      Stage 1 — RESUME UNDERSTANDING:
+      Extract from the resume: experience, achievements, technologies, competencies, certifications, transferable skills, leadership indicators, quantified metrics.
+      Identify what the candidate is ACTUALLY good at (not what they claim — what their achievements prove).
+
+      Stage 2 — JOB DESCRIPTION UNDERSTANDING:
+      Deeply analyze: responsibilities, required skills, preferred skills, hidden expectations, seniority indicators, industry terminology, business goals, soft skills, action verbs, repeated phrases.
+      Extract: high-value phrases, hiring signals, recruiter intent, critical requirements, implied requirements.
+      Identify what the recruiter ACTUALLY cares about (read between the lines).
+
+      Stage 3 — INDUSTRY UNDERSTANDING:
+      Industry: ${INDUSTRY_PROFILES[airlineProfile]?.label || "Generic"}
+      Determine: ATS conventions, resume conventions, recruiter expectations for this industry.
+
+      Stage 4 — SEMANTIC MAPPING:
+      Map: Resume Experience → Job Responsibilities. Resume Skills → Job Requirements. Resume Achievements → Business Objectives.
+      Identify: gaps, strengths, opportunities, transferable skills.
+
+      Stage 5 — OPTIMIZATION STRATEGY:
+      Decide: which keywords to use, which phrases to use, which sections to prioritize, what to condense, what to expand, what should appear earlier, what should be emphasized.
+
+      ═══════════════════════════════════════════════════════════
+      HIGH-VALUE LANGUAGE OPTIMIZATION
+      ═══════════════════════════════════════════════════════════
+
+      Use recruiter-grade wording. Transform weak phrases into high-impact statements:
+      - "Responsible for customer service" → "Delivered exceptional customer service resulting in measurable satisfaction improvements"
+      - "Worked on software" → "Designed and implemented scalable software solutions supporting mission-critical applications"
+      - "Helped with projects" → "Led cross-functional initiatives that improved operational efficiency and business outcomes"
+
+      Extract and reuse high-value phrases from the job description naturally:
+      - "cross-functional collaboration", "stakeholder management", "process optimization", "data-driven decision making"
+
+      ═══════════════════════════════════════════════════════════
+      KEYWORD STRATEGY (NO STUFFING)
+      ═══════════════════════════════════════════════════════════
+
+      1. Identify critical keywords (must-haves from JD).
+      2. Identify secondary keywords (nice-to-haves).
+      3. Identify semantic synonyms (use if natural keyword doesn't fit).
+      4. Identify industry terminology (from the keyword bank below).
+      5. Embed ALL keywords NATURALLY — never stuff. Each keyword must appear in context.
+
+      ═══════════════════════════════════════════════════════════
+      CONTEXT
+      ═══════════════════════════════════════════════════════════
+      ATS SYSTEM: ${atsSystem} (${atsFocus})
+      INDUSTRY KEYWORDS: ${INDUSTRY_PROFILES[airlineProfile]?.keywordBank || AVIATION_KEYWORDS}
+      INDUSTRY WRITING GUIDANCE: ${INDUSTRY_PROFILES[airlineProfile]?.writingGuidance || ""}
+      TONE: ${toneInstruction}
+      FORMAT: ${formatInstruction}
+      STRICTNESS: ${strictnessInstruction}
+
+      INPUT DATA:
+      [RESUME]: ${resumeText}
+      [JOB DESCRIPTION]: ${jobDescription}
+
+      ═══════════════════════════════════════════════════════════
+      CONTENT TARGET
+      ═══════════════════════════════════════════════════════════
+      Target: ~2,500 characters. One A4 page only — STRICT.
+      Each bullet: 80-120 chars max. Summary: 2-3 lines (~30-50 words).
+      Max 2-3 bullets per role. 1-2 for older roles.
+
+      ═══════════════════════════════════════════════════════════
+      FACTUAL INTEGRITY (NON-NEGOTIABLE)
+      ═══════════════════════════════════════════════════════════
+      NEVER fabricate: experience, employers, dates, metrics, certifications, skills.
+      ONLY use information from the original resume.
+      CRITICAL: NEVER invent percentages, metrics, or numbers. No fake numbers.
+
+      RETURN JSON FORMAT ONLY:
+      {
+        "score": number,
+        "score_breakdown": { "impact": number, "brevity": number, "keywords": number },
+        "summary_critique": "Brief explanation of what was optimized and why (shown in analysis panel, NOT in resume)",
+        "missing_keywords": ["string"],
+        "matched_keywords": ["string"],
+        "optimized_content": "Valid HTML string"
+      }
+    `;
+
+    const result = await recordAI({
+      systemPrompt: `You are an Expert Recruiter, Senior ATS Consultant, and Master Resume Strategist. You deeply analyze resumes and job descriptions before rewriting. You use recruiter-grade language, industry terminology, and high-impact phrases. You NEVER fabricate information. Industry: ${INDUSTRY_PROFILES[airlineProfile]?.label || "Generic"}. Always return ONLY valid JSON — no markdown fences, no prose.`,
+      userPrompt: prompt,
+      maxTokens: 6000,
+      temperature: 0.4,
+    });
+
+    // Robustly extract JSON — handles markdown fences, leading prose, trailing commentary.
+    // Falls back to a default-scored result on parse failure instead of crashing the UI.
+    let data: AviationAtsResult;
+    try {
+      data = extractJSON<AviationAtsResult>(result.text);
+    } catch (parseErr: any) {
+      console.warn("[analyzeWithGemini] JSON extraction failed, using fallback result:", parseErr?.message);
+      // CRITICAL: summary_critique is an ANALYSIS field shown in the UI's analysis panel,
+      // NOT in the resume. But we still must not leak provider errors here.
+      data = {
+        score: 0,
+        score_breakdown: { impact: 0, brevity: 0, keywords: 0 },
+        summary_critique: "Analysis could not be completed. Please try again with a different AI provider.",
+        missing_keywords: [],
+        matched_keywords: [],
+        optimized_content: "",
+      } as AviationAtsResult;
+    }
+
+    // Normalize markdown bold → <strong>
+    if (data.optimized_content) {
+      data.optimized_content = data.optimized_content.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    }
+    if (!data.score_breakdown) {
+      data.score_breakdown = { impact: 85, brevity: 90, keywords: data.score };
+    }
+    return data;
+  } catch (error: any) {
+    console.error("[analyzeWithGemini] AI Error:", error);
+    throw new Error(error.message || "Optimization failed. Please check the text and try again.");
+  }
+}
+
+// ============================================================================
+// 4b. UNIFIED AVIATION OPTIMIZER DIRECTIVE
+// ============================================================================
+//
+// This is the production path for Aviation ATS Mode. Unlike analyzeWithGemini()
+// (which returns HTML only), this generator produces a directive that asks the
+// AI for the SAME structured JSON shape as the standard OPTIMIZER_DIRECTIVE,
+// so the Optimizer.tsx mapping pipeline can build a proper ResumeData object
+// (fixing the "short content" bug where aviation mode just kept the original
+// resume content unchanged).
+//
+// It also HONORS the super-admin's Optimizer Directive settings:
+//   - If customDirectiveOverride is set → that becomes the BASE of the directive
+//     (the aviation keyword bank + airline profile are appended).
+//   - Otherwise → the generated directive from the structured config fields is used
+//     as the base, again with aviation context appended.
+// This ensures aviation mode is SYNCHRONIZED with the optimizer directive page.
+
+export interface AviationOptimizeResult {
+  // Structured resume JSON — same shape as OPTIMIZER_DIRECTIVE output
+  resume: {
+    name: string;
+    headline: string;
+    location: string;
+    phone: string;
+    email: string;
+    dateOfBirth: string;
+    summary: string;
+    skills: Array<{ category: string; items: string[] }>;
+    experience: Array<{
+      title: string;
+      company: string;
+      location: string;
+      startDate: string;
+      endDate: string;
+      bullets: string[];
+    }>;
+    education: Array<{
+      degree: string;
+      institution: string;
+      location: string;
+      startDate: string;
+      endDate: string;
+      modules: string;
+    }>;
+    languages: Array<{ name: string; proficiency: string; note: string }>;
+    missingKeywordsAdded: string[];
+    bulletsRewritten: number;
+  };
+  // ATS scoring metadata (kept for backward compat with the old analyzeWithGemini UI panel)
+  score: number;
+  score_breakdown: { impact: number; brevity: number; keywords: number };
+  matched_keywords: string[];
+  missing_keywords: string[];
+  summary_critique: string;
+  // The actual character count of the generated resume content (for the UI badge)
+  charCount: number;
+}
+
+/**
+ * Build the unified aviation directive. Merges:
+ *   1. Super-admin's optimizer directive config (from store, with custom override support)
+ *   2. Aviation keyword bank (cabin crew + broad aviation)
+ *   3. Airline-specific ATS profile (Emirates/Qatar/Etihad/…)
+ *   4. Tone / format / strictness settings
+ *
+ * The directive asks the AI for the SAME JSON shape as OPTIMIZER_DIRECTIVE so the
+ * Optimizer's existing JSON → ResumeData mapping works without changes.
+ */
+export function getAviationOptimizerDirective(
+  airlineProfile: string,
+  settings: AppSettings
+): string {
+  // --- 1. Read super-admin's optimizer config from store ---
+  let baseConfig: OptimizerDirectiveConfig | undefined;
+  try {
+    const state: any = useApp.getState();
+    baseConfig = state?.optimizerDirective;
+  } catch {
+    baseConfig = undefined;
+  }
+
+  // --- 2. Check for custom override (takes full priority over generated directive) ---
+  const customOverride = baseConfig?.customDirectiveOverride?.trim();
+  if (customOverride) {
+    return customOverride; // full custom directive takes priority
+  }
+
+  // --- 3. Use the directive engine as single source of truth ---
+  return getDirective("aviation", baseConfig, {
+    airlineProfile,
+    strictness: settings?.strictness,
+  });
+}
+
+/**
+ * Per-airline writing guidance — tells the AI how to frame the content for each carrier's
+ * specific ATS and culture. This goes beyond just keywords — it shapes tone and emphasis.
+ */
+function airlineSpecificWritingGuidance(airline: string): string {
+  const guide: Record<string, string> = {
+    emirates: `Emirates (Workday ATS):
+- Emphasize MULTICULTURAL exposure — Dubai-based global operations, 160+ nationalities served daily.
+- Premium cabin experience is critical — mention luxury service, fine dining, first-class standards.
+- "Diversity" and "Global Mindset" must appear naturally in summary AND skills.
+- Highlight any Arabic language ability or willingness to learn.
+- Tone: Premium, confident, world-class. Avoid casual language.`,
+    qatar: `Qatar Airways (SuccessFactors ATS):
+- Emphasize FIVE-STAR service — award-winning standards, Skytrax ratings.
+- Fast-paced hub operations — Doha connectivity, rapid turnarounds.
+- "Service Excellence" and "Award-Winning" should appear in summary or first bullets.
+- Mention willingness to relocate to Doha if not already there.
+- Tone: Formal, disciplined, premium.`,
+    etihad: `Etihad Aviation Group (Taleo ATS):
+- Abu Dhabi flagship carrier — "Choose Well" brand ethos.
+- Innovation focus — cabin crew inflight innovation, new product launches.
+- "Innovation" and "Service Excellence" priority keywords.
+- Tone: Balanced, modern, aspirational.`,
+    lufthansa: `Lufthansa Group (SAP SuccessFactors):
+- German engineering precision — punctuality, reliability, safety-first.
+- Star Alliance integration — mention multi-airline cooperation if relevant.
+- "Precision", "Safety-First", "Reliability" priority keywords.
+- Tone: Formal, precise, structured. No casual language.`,
+    ryanair: `Ryanair Careers ATS:
+- Low-cost carrier efficiency — fast turnarounds, high-volume operations.
+- "Efficiency", "Punctuality", "On-Time Performance" priority keywords.
+- Sales ability matters — duty-free, ancillary revenue, on-board sales.
+- Tone: Balanced, direct, efficiency-focused.`,
+    singapore: `Singapore Airlines (Workday ATS):
+- "Singapore Girl" service standard — Asian hospitality, refinement, grace.
+- Ultra-long-haul operations — endurance, time-zone management.
+- "Asian Hospitality", "Refinement", "Service Excellence" priority keywords.
+- Tone: Premium, gracious, attentive to detail.`,
+    airfrance: `Air France-KLM ATS:
+- French service elegance — bilingual capability is a plus.
+- Dual-hub (CDG/AMS) — SkyTeam integration.
+- "Elegance", "Bilingual", "Hospitality" priority keywords.
+- Tone: Premium, elegant, warm.`,
+    british: `British Airways (Workday ATS):
+- British heritage service — traditional standards of excellence.
+- London hub (LHR/LGW) — oneworld alliance integration.
+- "Heritage", "Premium", "Service Excellence" priority keywords.
+- Tone: Formal, professional, classic British polish.`,
+    generic: `Generic ATS (Workday / SuccessFactors / Taleo compatible):
+- Use general aviation keywords relevant to the role.
+- Standard cabin crew competency framework.
+- Tone: Balanced, professional.`,
+  };
+  return guide[airline] || guide.generic;
+}
+
+/**
+ * Run the unified aviation optimization. Calls the AI with the unified directive
+ * (which merges super-admin config + aviation keywords + airline profile) and
+ * returns the structured JSON result.
+ *
+ * Unlike analyzeWithGemini() (which returns HTML only), this returns a proper
+ * structured "resume" object that the Optimizer can map directly to ResumeData.
+ */
+export async function aviationOptimize(
+  resume: ResumeData,
+  jobDescription: string,
+  airlineProfile: string,
+  settings: AppSettings
+): Promise<AviationOptimizeResult> {
+  const directive = getAviationOptimizerDirective(airlineProfile, settings);
+  const profile = AIRLINE_ATS_PROFILES[airlineProfile] || AIRLINE_ATS_PROFILES.generic;
+
+  const userPrompt = `SOURCE RESUME (be truthful to this — never invent employers, dates, or metrics):
+${JSON.stringify({
+  name: resume.name,
+  headline: resume.headline,
+  contact: resume.contact,
+  dateOfBirth: resume.dateOfBirth,
+  summary: resume.summary,
+  experience: resume.experience.map((e) => ({
+    title: e.title,
+    company: e.company,
+    location: e.location,
+    startDate: e.startDate,
+    endDate: e.endDate,
+    bullets: e.bullets,
+  })),
+  education: resume.education.map((ed) => ({
+    degree: ed.degree,
+    field: ed.field,
+    institution: ed.institution,
+    location: ed.location,
+    startDate: ed.startDate,
+    endDate: ed.endDate,
+    highlights: ed.highlights,
+  })),
+  skills: resume.skills.map((s) => ({ name: s.name, category: s.category })),
+  languages: resume.languages,
+  certifications: resume.certifications,
+})}
+
+TARGET JOB DESCRIPTION:
+${jobDescription}
+
+TARGET AIRLINE: ${profile.system} (${profile.focus})
+PRIORITY KEYWORDS TO EMBED NATURALLY: ${profile.priorityKeywords?.join(", ") || "(use general aviation keywords)"}
+
+INSTRUCTIONS:
+1. Rewrite the resume to fit ONE A4 page (~2,500 characters max of body content).
+2. Embed the airline's priority keywords naturally throughout summary, skills, and bullets.
+3. CRITICAL: NEVER invent percentages, metrics, or numbers. Only use real data from the original resume. No fake "20% improvement" or "98% satisfaction".
+4. Most recent role: 2-3 bullets max. Older roles: 1-2 bullets max.
+5. Group skills into 2-3 categories with 3-5 items each. Do NOT include company names or airport names as skills.
+6. Match the tone preference (${profile.tone || "Balanced"}) of the target airline.
+7. EMPLOYER NAMES: Use the EXACT employer name from the SOURCE RESUME. NEVER rename, generalize, or replace employer names. If the source says "Sephora Doha", output "Sephora Doha" — NOT "Beauty Retailer".
+8. DATES: Use the EXACT dates from the SOURCE RESUME. NEVER change, remove, or invent dates.
+9. EDUCATION: Use the EXACT institution name and degree from the SOURCE RESUME. NEVER rename institutions.
+10. SUMMARY: Include ALL relevant information from the original summary, including language fluency. NEVER drop languages or certifications from the summary.
+11. NEVER use double periods (..) — always single period at end of sentence.
+12. NEVER invent employers, dates, or metrics — only rephrase real content.
+
+Return ONLY the JSON object described in the directive. No prose, no markdown fences.`;
+
+  // DEBUG: ensure directive is present before sending
+  console.group("[Aviation Optimizer Prompt]");
+  console.log("Directive chars:", directive.length);
+  console.log("User prompt chars:", userPrompt.length);
+  console.log("One-page constraint:", directive.includes("ONE PAGE") || directive.includes("Maximum pages: 1") || directive.includes("EXACTLY 1"));
+  console.log("Character target:", /2[,.]?[0-9]{3}|3[,.]?000|character/i.test(directive));
+  console.groupEnd();
+
+  // Validation: only HARD-FAIL if the directive is clearly truncated or empty.
+  // Page format and character target checks are SOFT — they warn but don't abort,
+  // because custom directive overrides may intentionally omit these details.
+  if (process.env.NODE_ENV !== "test") {
+    if (directive.length < 500) {
+      throw new Error("Aviation optimizer directive missing or truncated from final prompt. Aborting.");
+    }
+    // Soft checks — warn but don't crash the optimization
+    const hasPageRule = directive.includes("ONE PAGE") || directive.includes("ONE A4 PAGE") || directive.includes("EXACTLY 1") || directive.includes("Maximum pages: 1") || directive.includes("one page") || directive.includes("one A4 page");
+    const hasCharTarget = /2[,.]?[0-9]{3}|3[,.]?000|character/i.test(directive);
+    if (!hasPageRule || !hasCharTarget) {
+      console.warn("[AviationOptimizer] Directive validation warning — missing recommended elements:", {
+        hasPageRule,
+        hasCharTarget,
+        directiveLength: directive.length,
+        directivePreview: directive.slice(0, 500),
+      });
+      // DO NOT throw — let the optimization proceed.
+      // The aviation augmentation already includes "ONE A4 PAGE" and character
+      // targets in most cases. If the base directive is missing these, the
+      // augmentation layer compensates.
+    }
+  }
+
+  const split = splitOptimizationDirective(directive);
+  // Prepend a strict anti-hallucination guard to the system prompt.
+  // Free-tier models (Llama-3.1/3.3-70b) routinely invent metrics and
+  // employers when generating large JSON; this preamble reinforces the
+  // "never fabricate" rule BEFORE the directive content.
+  const antiHallucinationPreamble = `CRITICAL RULES (override everything else):
+
+=== ZERO-HALLUCINATION POLICY ===
+1. NEVER invent employers, job titles, schools, degrees, certifications, locations, or languages not in the SOURCE RESUME.
+2. NEVER invent percentages, metrics, or numbers. Only reuse numbers that appear VERBATIM in the SOURCE RESUME.
+3. NEVER change the candidate's name, email, phone, or contact info.
+4. You may REPHRASE existing content and WEAVE IN keywords from the JD, but NEVER fabricate facts.
+
+=== NATURAL KEYWORD INTEGRATION (ANTI-STUFFING) ===
+5. NEVER append raw keyword lists to sentences. Do NOT write: "Experience in hospitality, F&B, guest service, customer care, multilingual."
+6. Instead, WEAVE keywords naturally into context: "Delivered hospitality excellence through personalized guest service and multilingual F&B operations."
+7. Each keyword should appear ONCE, embedded in a relevant sentence — not dumped in a list.
+
+=== ACTION-ORIENTED BULLETS & GRAMMAR ===
+8. Start EVERY experience bullet with a strong action verb: Spearheaded, Orchestrated, Streamlined, Facilitated, Coordinated, Delivered, Executed, Managed.
+9. Keep sentences under 20 words. Be concise and impactful.
+10. NEVER use double periods (..) — always single period at end.
+11. NEVER repeat filler phrases like "demonstrating strong attention to detail" or "committed to excellence."
+12. Each bullet must be a unique, specific achievement or responsibility.
+
+`;
+
+  const result = await recordAI({
+    systemPrompt: antiHallucinationPreamble + split.system,
+    userPrompt: (split.user ? split.user + "\n\n---\n\n" : "") + userPrompt,
+    maxTokens: 8000,
+    // Low temperature (0.15) minimizes hallucination for factual resume data.
+    // Llama models at 0.3-0.4 routinely invent employers and metrics; 0.15
+    // keeps output deterministic enough to preserve factual consistency.
+    temperature: 0.15,
+    taskCategory: "document",
+    // Aviation Optimizer ships the same ~22k-char directive + 8k output tokens
+    // as the standard Resume Optimizer — needs the extended timeout to avoid
+    // being killed mid-generation on free-tier providers.
+    timeoutMs: OPTIMIZER_CALL_TIMEOUT_MS,
+  });
+
+  // Diagnostic logging — matches the standard optimizer's log so we can see
+  // which provider served the call and whether the response was big enough.
+  console.info(
+    `[Aviation Optimizer] Provider: ${result.provider}, ` +
+    `Response length: ${result.text?.length ?? 0} chars, ` +
+    `Tokens est: ${result.tokensEstimate}, ` +
+    `isLocalEngine: ${result.isLocalEngine === true}`
+  );
+
+  // If the local engine was used OR the response is too short, return the
+  // ORIGINAL resume with a warning instead of throwing. This ensures the
+  // user always gets a result — they can retry if the AI providers recover.
+  if (result.provider === "Local Engine (offline mode)" || result.text.length < 500) {
+    console.warn(
+      `[Aviation Optimizer] Returning original resume — no AI provider produced ` +
+      `a valid response (provider=${result.provider}, responseLength=${result.text?.length ?? 0}).`
+    );
+    // Map the original ResumeData to the AviationOptimizeResult shape
+    return {
+      resume: {
+        name: resume.name || "",
+        headline: resume.headline || "",
+        location: resume.contact?.location || "",
+        phone: resume.contact?.phone || "",
+        email: resume.contact?.email || "",
+        dateOfBirth: resume.dateOfBirth || "",
+        summary: resume.summary || "",
+        skills: (resume.skills || []).map((s) => ({
+          category: s.category || "Skills",
+          items: [s.name],
+        })),
+        experience: (resume.experience || []).map((e) => ({
+          title: e.title || "",
+          company: e.company || "",
+          location: e.location || "",
+          startDate: e.startDate || "",
+          endDate: e.endDate || "",
+          bullets: e.bullets || [],
+        })),
+        education: (resume.education || []).map((ed) => ({
+          degree: ed.degree || "",
+          institution: ed.institution || "",
+          location: ed.location || "",
+          startDate: ed.startDate || "",
+          endDate: ed.endDate || "",
+          modules: ed.highlights?.join(", ") || "",
+        })),
+        languages: (resume.languages || []).map((l) => ({
+          name: l.name || "",
+          proficiency: l.proficiency || "",
+          note: "",
+        })),
+        missingKeywordsAdded: [],
+        bulletsRewritten: 0,
+      },
+      score: 0,
+      score_breakdown: { impact: 0, brevity: 0, keywords: 0 },
+      matched_keywords: [],
+      missing_keywords: [],
+      summary_critique: "Optimization skipped — no AI provider was available. Original resume preserved.",
+      charCount: JSON.stringify(resume).length,
+    };
+  }
+
+  // Parse JSON — robustly handle markdown fences, prose preambles, trailing commentary
+  let data: AviationOptimizeResult;
+  let rawParsed: any;
+  try {
+    rawParsed = extractJSON<any>(result.text);
+  } catch (parseErr: any) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[aviationOptimize] JSON extraction failed:", parseErr?.message);
+    }
+    throw new Error("Optimization failed — the AI returned an unexpected response. Please try again.");
+  }
+
+  // Support BOTH response shapes:
+  //   1. Wrapped: { resume: { name, experience, ... }, score, ... }
+  //   2. Flat:    { name, experience, education, skills, ... } (common from non-Puter providers)
+  if (rawParsed.resume && typeof rawParsed.resume === "object") {
+    data = rawParsed as AviationOptimizeResult;
+  } else if (rawParsed.name || rawParsed.experience || rawParsed.education || rawParsed.summary) {
+    // Wrap flat response into the expected AviationOptimizeResult shape
+    data = {
+      resume: {
+        name: rawParsed.name || "",
+        headline: rawParsed.headline || "",
+        location: rawParsed.location || "",
+        phone: rawParsed.phone || "",
+        email: rawParsed.email || "",
+        dateOfBirth: rawParsed.dateOfBirth || "",
+        summary: rawParsed.summary || "",
+        skills: Array.isArray(rawParsed.skills) ? rawParsed.skills : [],
+        experience: Array.isArray(rawParsed.experience) ? rawParsed.experience : [],
+        education: Array.isArray(rawParsed.education) ? rawParsed.education : [],
+        languages: Array.isArray(rawParsed.languages) ? rawParsed.languages : [],
+        missingKeywordsAdded: Array.isArray(rawParsed.missingKeywordsAdded) ? rawParsed.missingKeywordsAdded : [],
+        bulletsRewritten: rawParsed.bulletsRewritten ?? 0,
+      },
+      score: rawParsed.score ?? 0,
+      score_breakdown: rawParsed.score_breakdown || { impact: 85, brevity: 90, keywords: 85 },
+      matched_keywords: Array.isArray(rawParsed.matched_keywords) ? rawParsed.matched_keywords : [],
+      missing_keywords: Array.isArray(rawParsed.missing_keywords) ? rawParsed.missing_keywords : [],
+      summary_critique: rawParsed.summary_critique || "",
+      charCount: rawParsed.charCount || 0,
+    };
+  } else {
+    // [PIPELINE] Partial response repaired.
+    // The AI returned JSON but it doesn't match the expected resume shape.
+    // Instead of throwing, repair by merging whatever fields ARE present with
+    // the original resume — so the user always gets a result.
+    console.warn(
+      "[Aviation Optimizer] AI response was incomplete — attempting repair by merging with original resume."
+    );
+    console.warn("[Aviation Optimizer] Raw parsed keys:", Object.keys(rawParsed || {}));
+    data = {
+      resume: {
+        name: rawParsed.name || resume.name || "",
+        headline: rawParsed.headline || resume.headline || "",
+        location: rawParsed.location || resume.contact?.location || "",
+        phone: rawParsed.phone || resume.contact?.phone || "",
+        email: rawParsed.email || resume.contact?.email || "",
+        dateOfBirth: rawParsed.dateOfBirth || resume.dateOfBirth || "",
+        // Use AI summary if present and non-trivial, otherwise keep original
+        summary: (rawParsed.summary && rawParsed.summary.length > 20)
+          ? rawParsed.summary
+          : (resume.summary || ""),
+        skills: Array.isArray(rawParsed.skills) && rawParsed.skills.length > 0
+          ? rawParsed.skills
+          : (resume.skills || []).map((s) => ({ category: s.category || "Skills", items: [s.name] })),
+        experience: Array.isArray(rawParsed.experience) && rawParsed.experience.length > 0
+          ? rawParsed.experience
+          : (resume.experience || []).map((e) => ({
+              title: e.title || "", company: e.company || "", location: e.location || "",
+              startDate: e.startDate || "", endDate: e.endDate || "", bullets: e.bullets || [],
+            })),
+        education: Array.isArray(rawParsed.education) && rawParsed.education.length > 0
+          ? rawParsed.education
+          : (resume.education || []).map((ed) => ({
+              degree: ed.degree || "", institution: ed.institution || "", location: ed.location || "",
+              startDate: ed.startDate || "", endDate: ed.endDate || "", modules: ed.highlights?.join(", ") || "",
+            })),
+        languages: Array.isArray(rawParsed.languages) && rawParsed.languages.length > 0
+          ? rawParsed.languages
+          : (resume.languages || []).map((l) => ({ name: l.name || "", proficiency: l.proficiency || "", note: "" })),
+        missingKeywordsAdded: Array.isArray(rawParsed.missingKeywordsAdded) ? rawParsed.missingKeywordsAdded : [],
+        bulletsRewritten: rawParsed.bulletsRewritten ?? 0,
+      },
+      score: rawParsed.score ?? 0,
+      score_breakdown: rawParsed.score_breakdown || { impact: 85, brevity: 90, keywords: 85 },
+      matched_keywords: Array.isArray(rawParsed.matched_keywords) ? rawParsed.matched_keywords : [],
+      missing_keywords: Array.isArray(rawParsed.missing_keywords) ? rawParsed.missing_keywords : [],
+      summary_critique: rawParsed.summary_critique || "Optimization partially recovered — some fields merged from original resume.",
+      charCount: rawParsed.charCount || 0,
+    };
+  }
+
+  // Validate minimal content
+  if (!data.resume.summary || data.resume.summary.length < 50) {
+    console.warn("[aviationOptimize] Summary is too short or missing — AI may have returned an analysis instead of a resume.");
+  }
+
+  // CRITICAL FIX: Apply grammar cleanup to the parsed resume data.
+  // The standard path uses processAIResponse() which calls cleanupResumeGrammar(),
+  // but the aviation path parsed JSON directly — so double periods, filler phrases,
+  // and other grammar issues were never fixed.
+  try {
+    const { cleanupResumeGrammar } = await import("./ai-response-processor");
+    data.resume = cleanupResumeGrammar(data.resume) as typeof data.resume;
+    if (data.resume.summary) {
+      // Fix double periods specifically in summary (most common location)
+      data.resume.summary = data.resume.summary
+        .replace(/\.{2,}/g, ".")
+        .replace(/\s+\./g, ".")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+    }
+  } catch { /* non-fatal — grammar cleanup is best-effort */ }
+
+  // Compute character count — use the SAME method as standard optimization
+  // (summary + experience + skills + education + languages only) for consistency.
+  const charCount = JSON.stringify({
+    summary: data.resume.summary,
+    experience: data.resume.experience,
+    skills: data.resume.skills,
+    education: data.resume.education,
+    languages: data.resume.languages,
+  }).length;
+  data.charCount = charCount;
+
+  // Normalize score breakdown
+  if (!data.score_breakdown) {
+    data.score_breakdown = { impact: 85, brevity: 90, keywords: data.score || 85 };
+  }
+  if (typeof data.score !== "number") {
+    data.score = Math.round(
+      (data.score_breakdown.impact + data.score_breakdown.brevity + data.score_breakdown.keywords) / 3
+    );
+  }
+  if (!Array.isArray(data.matched_keywords)) data.matched_keywords = [];
+  if (!Array.isArray(data.missing_keywords)) data.missing_keywords = [];
+  if (typeof data.summary_critique !== "string") data.summary_critique = "";
+
+  return data;
+}
+
+/**
+ * Convert a ResumeData object into the plain-text input that analyzeWithGemini expects.
+ */
+export function resumeToPlainText(r: ResumeData): string {
+  const parts: string[] = [];
+  parts.push(r.name || "");
+  if (r.headline) parts.push(r.headline);
+  const contact = [r.contact.email, r.contact.phone, r.contact.location, r.contact.linkedin, r.contact.github, r.contact.website].filter(Boolean).join(" | ");
+  if (contact) parts.push(contact);
+  if (r.dateOfBirth) parts.push(`Date of Birth: ${r.dateOfBirth}`);
+  if (r.summary) parts.push(`\nPROFESSIONAL SUMMARY\n${r.summary}`);
+  if (r.experience.length) {
+    parts.push("\nEXPERIENCE");
+    for (const e of r.experience) {
+      parts.push(`${e.title} | ${e.company}${e.location ? ", " + e.location : ""} | ${e.startDate} to ${e.endDate}`);
+      for (const b of e.bullets) parts.push(`- ${b}`);
+    }
+  }
+  if (r.education.length) {
+    parts.push("\nEDUCATION");
+    for (const ed of r.education) {
+      parts.push(`${ed.degree}${ed.field ? " in " + ed.field : ""} | ${ed.institution} | ${ed.startDate} to ${ed.endDate}`);
+      if (ed.highlights?.length) for (const h of ed.highlights) parts.push(`- ${h}`);
+    }
+  }
+  if (r.skills.length) parts.push("\nSKILLS\n" + r.skills.map((s) => s.name).join(", "));
+  if (r.languages.length) parts.push("\nLANGUAGES\n" + r.languages.map((l) => `${l.name}: ${l.proficiency}`).join("\n"));
+  if (r.certifications.length) parts.push("\nCERTIFICATIONS\n" + r.certifications.map((c) => `${c.name}${c.issuer ? " - " + c.issuer : ""}`).join("\n"));
+  return parts.join("\n");
+}
+
+// ============================================================================
+// 5. getDocxHtml — strict A4 one-page HTML wrapper for Word export
+// ============================================================================
+
+/**
+ * Wraps resume HTML content in a strict A4 one-page Word-compatible HTML document.
+ * The @page rules force A4 (21cm × 29.7cm) with 1.27cm margins in Word.
+ * Saves as .doc (Word 97-2003) which Word opens natively with the CSS preserved.
+ */
+export function getDocxHtml(content: string, template: "professional" | "modern" | "minimal" = "professional"): string {
+  let fontFamily = "'Times New Roman', serif";
+  let headingColor = "#000000";
+  let textColor = "#000000";
+
+  if (template === "modern") {
+    fontFamily = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+    headingColor = "#2c3e50";
+    textColor = "#333333";
+  } else if (template === "minimal") {
+    fontFamily = "'Inter', 'Segoe UI', Roboto, sans-serif";
+    headingColor = "#111827";
+    textColor = "#4b5563";
+  }
+
+  return `
+    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset='utf-8'>
+        <title>Resume Export</title>
+        <style>
+          /* STRICT A4 PAGE LAYOUT */
+          @page {
+              size: 21cm 29.7cm;
+              margin: 1.27cm 1.27cm 1.27cm 1.27cm;
+              mso-page-orientation: portrait;
+          }
+          @page WordSection1 {
+              size: 21cm 29.7cm;
+              margin: 1.27cm 1.27cm 1.27cm 1.27cm;
+          }
+          div.WordSection1 {
+              page: WordSection1;
+          }
+          /* Global Resets - PLAIN TEXT AESTHETIC */
+          body {
+            font-family: ${fontFamily};
+            font-size: 12.0pt;
+            line-height: 1.15;
+            color: ${textColor};
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+          }
+          /* Force Single Column Flow */
+          div, p, ul, li, h1, h2, h3, h4 {
+            display: block !important;
+            width: 100% !important;
+            float: none !important;
+            clear: both !important;
+          }
+          /* Header: Name - LEFT ALIGNED */
+          h1 {
+            font-size: 16pt;
+            font-weight: bold;
+            text-align: left;
+            text-transform: uppercase;
+            color: ${headingColor};
+            margin: 0 0 4pt 0;
+            padding: 0;
+          }
+          /* Header: Contact - LEFT ALIGNED */
+          p.contact {
+            text-align: left;
+            font-size: 12pt;
+            margin: 0 0 12pt 0;
+            color: ${textColor};
+          }
+          /* Section Headers - LEFT ALIGNED */
+          h3 {
+            font-size: 12pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            text-align: left;
+            border: none !important;
+            text-decoration: none !important;
+            margin-top: 12pt;
+            margin-bottom: 6pt;
+            color: ${headingColor};
+          }
+          /* Job Titles */
+          h4 {
+            font-size: 12pt;
+            margin-top: 6pt;
+            margin-bottom: 2pt;
+            color: ${headingColor};
+            font-weight: bold;
+          }
+          /* Body Text */
+          p {
+            margin: 0;
+            text-align: justify;
+            margin-bottom: 4pt;
+          }
+          /* Bullets */
+          ul {
+            margin-top: 0;
+            margin-bottom: 8pt;
+            padding-left: 18pt;
+          }
+          li {
+            margin-bottom: 2pt;
+            padding-left: 0;
+            text-align: justify; /* straight right edge on multi-line bullets */
+          }
+          /* Clean Bold */
+          strong, b {
+            color: ${headingColor};
+            font-weight: bold;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="WordSection1">
+          ${content}
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+/**
+ * Build the inner HTML body for a resume, following the directive's structure:
+ *   <h1>NAME</h1>
+ *   <p class="contact">contact info</p>
+ *   <h3>PROFESSIONAL SUMMARY</h3><p>summary</p>
+ *   <h3>EXPERIENCE</h3>
+ *     <h4><strong>Title</strong> | <strong>Company</strong>, Location | <strong>YYYY to YYYY</strong></h4>
+ *     <ul><li>bullet</li>...</ul>
+ *   <h3>EDUCATION</h3>
+ *     <h4><strong>Degree</strong> | <strong>School</strong> | <strong>YYYY to YYYY</strong></h4>
+ *     <ul><li>modules</li></ul>
+ *   <h3>SKILLS</h3><p>skill, skill, skill</p>
+ */
+export function resumeToDirectiveHtml(r: ResumeData, opts?: { bodyAlignment?: string; sectionAlignment?: Record<string, string> }): string {
+  const alignFor = (section: string): string => {
+    const per = opts?.sectionAlignment?.[section];
+    if (per === "left" || per === "center" || per === "justify") return per;
+    const body = opts?.bodyAlignment;
+    if (body === "left" || body === "center" || body === "justify") return body;
+    return "justify";
+  };
+  const fmtDate = (d?: string) => {
+    if (!d) return "";
+    if (/present/i.test(d)) return "Present";
+    const m = d.match(/^(\d{4})-(\d{2})$/);
+    if (m) return m[1]; // YYYY
+    if (/^\d{4}$/.test(d)) return d;
+    return d;
+  };
+
+  const parts: string[] = [];
+  // Header
+  parts.push(`<h1>${escapeHtml((r.name || "YOUR NAME").toUpperCase())}</h1>`);
+  const contactBits = [r.contact.email, r.contact.phone, r.contact.location, r.contact.linkedin, r.contact.github, r.contact.website].filter((s): s is string => Boolean(s));
+  if (contactBits.length) parts.push(`<p class="contact">${contactBits.map(escapeHtml).join(" | ")}</p>`);
+
+  // Summary
+  if (r.summary) {
+    parts.push(`<h3>PROFESSIONAL SUMMARY</h3><p style="text-align:${alignFor("professionalProfile")}">${escapeHtml(r.summary)}</p>`);
+  }
+
+  // Experience
+  if (r.experience.length) {
+    parts.push(`<h3>EXPERIENCE</h3>`);
+    for (const e of r.experience) {
+      const dateStr = `${fmtDate(e.startDate)} to ${fmtDate(e.endDate)}`;
+      parts.push(`<h4><strong>${escapeHtml(e.title)}</strong> | <strong>${escapeHtml(e.company)}</strong>${e.location ? ", " + escapeHtml(e.location) : ""} | <strong>${escapeHtml(dateStr)}</strong></h4>`);
+      if (e.bullets.length) {
+        parts.push(`<ul style="text-align:${alignFor("professionalExperience")}">${e.bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`);
+      }
+    }
+  }
+
+  // Education
+  if (r.education.length) {
+    parts.push(`<h3>EDUCATION</h3>`);
+    for (const ed of r.education) {
+      const dateStr = `${fmtDate(ed.startDate)} to ${fmtDate(ed.endDate)}`;
+      parts.push(`<h4><strong>${escapeHtml(ed.degree)}${ed.field ? " in " + escapeHtml(ed.field) : ""}</strong> | <strong>${escapeHtml(ed.institution)}</strong> | <strong>${escapeHtml(dateStr)}</strong></h4>`);
+      if (ed.highlights?.length) {
+        parts.push(`<ul style="text-align:${alignFor("education")}">${ed.highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("")}</ul>`);
+      }
+    }
+  }
+
+  // Skills
+  if (r.skills.length) {
+    parts.push(`<h3>SKILLS</h3><p style="text-align:${alignFor("skills")}">${r.skills.map((s) => `<strong>${escapeHtml(s.name)}</strong>${s.category ? ` (${escapeHtml(s.category)})` : ""}`).join(", ")}</p>`);
+  }
+
+  // Languages
+  if (r.languages.length) {
+    parts.push(`<h3>LANGUAGES</h3><p style="text-align:${alignFor("languages")}">${r.languages.map((l) => `<strong>${escapeHtml(l.name)}</strong>: ${escapeHtml(l.proficiency)}`).join(", ")}</p>`);
+  }
+
+  // Certifications
+  if ((r.certifications?.length ?? 0) > 0) {
+    parts.push(`<h3>CERTIFICATIONS</h3><ul style="text-align:${alignFor("certifications")}">${
+      (r.certifications??[]).map((c) => `<li><strong>${escapeHtml(c.name)}</strong>${
+        c.issuer ? " - " + escapeHtml(c.issuer) : ""
+      }${c.date ? ` (${escapeHtml(fmtDate(c.date))})` : ""}</li>`).join("")
+    }</ul>`);
+  }
+
+  // Projects
+  if ((r.projects?.length ?? 0) > 0) {
+    parts.push(`<h3>PROJECTS</h3><ul style="text-align:${alignFor("projects")}">${
+      r.projects.map((p) => `<li><strong>${escapeHtml(p.name)}</strong>${
+        p.description ? " — " + escapeHtml(p.description) : ""
+      }${p.url ? ` (${escapeHtml(p.url)})` : ""}</li>`).join("")
+    }</ul>`);
+  }
+
+  // Achievements
+  if ((r.achievements?.length ?? 0) > 0) {
+    parts.push(`<h3>ACHIEVEMENTS</h3><ul style="text-align:${alignFor("achievements")}">${
+      (r.achievements??[]).map((a) => `<li>${escapeHtml(a)}</li>`).join("")
+    }</ul>`);
+  }
+
+  // Additional Information
+  if (r.additionalInfo) {
+    parts.push(`<h3>ADDITIONAL INFORMATION</h3><p style="text-align:${alignFor("additionalInformation")}">${escapeHtml(r.additionalInfo)}</p>`);
+  }
+
+  // Dynamic Sections — custom sections from the optimizer pipeline
+  // (e.g. "Luxury Guest Experience", "Cabin Safety Awareness" category breakdowns)
+  if ((r.dynamicSections?.length ?? 0) > 0) {
+    for (const ds of r.dynamicSections!) {
+      parts.push(`<h3>${escapeHtml(ds.title)}</h3>`);
+      if (ds.content) {
+        parts.push(`<p style="text-align:${alignFor("dynamicSections")}">${escapeHtml(ds.content)}</p>`);
+      }
+      if (ds.bullets?.length) {
+        parts.push(`<ul style="text-align:${alignFor("dynamicSections")}">${
+          (ds.bullets??[]).map((b) => `<li>${escapeHtml(b)}</li>`).join("")
+        }</ul>`);
+      }
+    }
+  }
+
+  return parts.join("\n");
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}

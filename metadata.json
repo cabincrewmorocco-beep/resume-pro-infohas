@@ -1,0 +1,6 @@
+{
+  "name": "INFOHAS ATS PRO",
+  "description": "AI-powered resume builder, ATS checker, optimizer, cover letter generator, and interview prep platform.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
