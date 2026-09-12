@@ -117,7 +117,7 @@ function saveActiveOverrides(key: string, map: Record<string, boolean>): void {
   }
 }
 
-function applyActiveOverrides<T extends { id: string; isActive: boolean }>(
+function applyActiveOverrides<T extends { id: string; isActive?: boolean }>(
   items: T[],
   overrides: Record<string, boolean>
 ): T[] {
@@ -140,6 +140,10 @@ export interface AdminSlice {
   branding: BrandingConfig;
   flags: FeatureFlags;
   optimizerDirective: OptimizerDirectiveConfig;
+  _lastProviderHash?: string;
+  fallbackOfferOpen?: boolean;
+  fallbackOfferChoices?: AIProvider[];
+  fallbackOfferCurrentProviderId?: string | null;
   /** Interview scenarios (Super Admin → Scenario Management) — persisted to D1. */
   scenarios: InterviewScenario[];
   /** Interviewer personas (Super Admin → Persona Management) — persisted to D1. */
@@ -375,7 +379,7 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
         providerSettings: {
           ...s.providerSettings,
           defaultProviderId: s.providerSettings.defaultProviderId === id ? null : s.providerSettings.defaultProviderId,
-          fallbackProviderIds: s.providerSettings.fallbackProviderIds.filter((fid) => fid !== id),
+          fallbackProviderIds: (s.providerSettings.fallbackProviderIds || []).filter((fid) => fid !== id),
         },
       };
     });
@@ -416,14 +420,15 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
 
   toggleFallback: (id) => {
     set((s) => {
-      const isIn = s.providerSettings.fallbackProviderIds.includes(id);
+      const list = s.providerSettings.fallbackProviderIds || [];
+      const isIn = list.includes(id);
       return {
         providers: s.providers.map((p) => (p.id === id ? { ...p, isFallback: !isIn } : p)),
         providerSettings: {
           ...s.providerSettings,
           fallbackProviderIds: isIn
-            ? s.providerSettings.fallbackProviderIds.filter((fid) => fid !== id)
-            : [...s.providerSettings.fallbackProviderIds, id],
+            ? list.filter((fid) => fid !== id)
+            : [...list, id],
         },
       };
     });
@@ -433,7 +438,7 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
 
   reorderFallback: (id, direction) => {
     set((s) => {
-      const ids = [...s.providerSettings.fallbackProviderIds];
+      const ids = [...(s.providerSettings.fallbackProviderIds || [])];
       const i = ids.indexOf(id);
       if (i < 0) return s;
       const j = direction === "up" ? i - 1 : i + 1;
@@ -470,10 +475,10 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
               usage: {
                 ...p.usage,
                 requests: (p.usage?.requests ?? 0) + 1,
-                tokens: (p.usage?.tokens ?? 0) + (l.inputTokens ?? 0) + (l.outputTokens ?? 0),
+                tokens: (p.usage?.tokens ?? 0) + (Number(l.inputTokens) || 0) + (Number(l.outputTokens) || 0),
                 errors: (p.usage?.errors ?? 0) + (l.status === "success" ? 0 : 1),
-                avgLatencyMs: Math.round(((p.usage?.avgLatencyMs ?? 0) * (p.usage?.requests ?? 0) + l.latencyMs) / ((p.usage?.requests ?? 0) + 1)),
-                cost: (p.usage?.cost ?? 0) + (l.inputTokens ?? 0) * (p.costPerInputToken ?? 0) + (l.outputTokens ?? 0) * (p.costPerOutputToken ?? 0),
+                avgLatencyMs: Math.round(((p.usage?.avgLatencyMs ?? 0) * (p.usage?.requests ?? 0) + (Number(l.latencyMs) || 0)) / ((p.usage?.requests ?? 0) + 1)),
+                cost: (Number(p.usage?.cost) || 0) + (Number(l.inputTokens) || 0) * (Number(p.costPerInputToken) || 0) + (Number(l.outputTokens) || 0) * (Number(p.costPerOutputToken) || 0),
               },
             }
           : p
@@ -534,12 +539,12 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
 
   updatePrompt: (id, patch) => {
     set((s) => ({
-      prompts: s.prompts.map((p) => (p.id === id ? { ...p, ...patch, version: p.version + 1 } : p)),
+      prompts: s.prompts.map((p) => (p.id === id ? { ...p, ...patch, version: (Number(p.version) || 1) + 1 } : p)),
     }));
     if (patch.isActive !== undefined) {
       try {
         const current = loadActiveOverrides(PROMPT_ACTIVE_KEY);
-        current[id] = patch.isActive;
+        current[id] = Boolean(patch.isActive);
         saveActiveOverrides(PROMPT_ACTIVE_KEY, current);
       } catch {}
     }
@@ -558,7 +563,7 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
 
   updateFlag: (k, v) => {
     set((s) => ({ flags: { ...s.flags, [k]: v } }));
-    cloudApiSafe(updateFlag)(k, v).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
+    cloudApiSafe(updateFlag)(String(k), v).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
   },
 
   updateOptimizerDirective: (patch) => {

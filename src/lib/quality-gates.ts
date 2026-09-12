@@ -143,8 +143,9 @@ export function extractResumeFacts(resume: ResumeData): ResumeFact[] {
 
   // Extract languages
   for (const lang of resume.languages || []) {
-    if (lang.name && lang.name.trim()) {
-      facts.push({ text: lang.name.trim(), type: "language", verified: false });
+    const langName = String(lang.name || lang.language || "").trim();
+    if (langName) {
+      facts.push({ text: langName, type: "language", verified: false });
     }
   }
 
@@ -705,7 +706,7 @@ export function repairHallucinations(
   }
 
   // Repair headline
-  if (repaired.headline) {
+  if (typeof repaired.headline === "string") {
     repaired.headline = rewriteText(repaired.headline);
   }
 
@@ -815,12 +816,14 @@ export function repairContent(
 
   // Strategy 6: Restore dropped languages
   if (original.languages && original.languages.length > 0) {
-    const optimizedLangNames = new Set((repaired.languages || []).map((l) => l.name.toLowerCase()));
+    const getLangName = (l: any) => String(l.name || l.language || "").toLowerCase();
+    const optimizedLangNames = new Set((repaired.languages || []).map(getLangName));
     for (const origLang of original.languages) {
-      if (!optimizedLangNames.has(origLang.name.toLowerCase())) {
+      const name = getLangName(origLang);
+      if (name && !optimizedLangNames.has(name)) {
         if (!repaired.languages) repaired.languages = [];
         repaired.languages.push(origLang);
-        repairsMade.push(`Restored dropped language: ${origLang.name}`);
+        repairsMade.push(`Restored dropped language: ${origLang.name || origLang.language || name}`);
         expanded = true;
       }
     }
@@ -854,11 +857,12 @@ export function repairContent(
   }
 
   // Strategy 9: Restore dropped achievements
-  if (original.achievements && original.achievements.length > 0) {
-    const repairedAchievements = repaired.achievements || [];
-    const optimizedAchNames = new Set(repairedAchievements.map((a) => (a || "").toLowerCase()));
-    for (const origAch of original.achievements) {
-      if (origAch && !optimizedAchNames.has(origAch.toLowerCase())) {
+  const origAchievements = Array.isArray(original.achievements) ? (original.achievements as string[]) : [];
+  if (origAchievements.length > 0) {
+    const repairedAchievements = Array.isArray(repaired.achievements) ? (repaired.achievements as string[]) : [];
+    const optimizedAchNames = new Set(repairedAchievements.map((a) => (typeof a === "string" ? a.toLowerCase() : "")));
+    for (const origAch of origAchievements) {
+      if (typeof origAch === "string" && !optimizedAchNames.has(origAch.toLowerCase())) {
         repairedAchievements.push(origAch);
         repairsMade.push(`Restored dropped achievement: ${origAch}`);
         expanded = true;

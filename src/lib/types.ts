@@ -71,7 +71,9 @@ export interface ResumeSkill {
 
 export interface ResumeLanguage {
   id: string;
-  language: string;
+  language?: string;
+  name?: string;
+  proficiency?: string;
   fluency?: string;
   [key: string]: unknown;
 }
@@ -216,6 +218,7 @@ export interface CareerMaterial {
   type: string;
   title: string;
   content: string;
+  contentText?: string;
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;
@@ -317,10 +320,14 @@ export interface AIProviderLog {
   id: string;
   providerId: string;
   timestamp: string;
+  createdAt?: string;
   model?: string;
   tokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
   latencyMs?: number;
   success: boolean;
+  status?: string;
   error?: string;
   promptPreview?: string;
   cost?: number;
@@ -328,8 +335,9 @@ export interface AIProviderLog {
 }
 
 export interface AIProviderSettings {
-  defaultProviderId: string;
+  defaultProviderId: string | null;
   fallbackEnabled: boolean;
+  fallbackProviderIds?: string[];
   autoRotateKeys?: boolean;
   maxRetries?: number;
   timeoutMs?: number;
@@ -345,6 +353,7 @@ export interface FallbackChainEntry {
 export interface FallbackChainConfig {
   enabled: boolean;
   chain: FallbackChainEntry[] | any[];
+  entries?: any[];
   autoHeal?: boolean;
   [key: string]: unknown;
 }
@@ -356,7 +365,8 @@ export interface PromptTemplate {
   category: string;
   prompt: string;
   systemPrompt?: string;
-  version?: string;
+  version?: any;
+  isActive?: boolean;
   isBuiltIn?: boolean;
   variables?: string[];
   [key: string]: unknown;
@@ -575,4 +585,30 @@ export interface PromptVersion {
   version: string;
   content: string;
   updatedAt?: string;
+}
+
+export interface SectionFingerprint {
+  sectionType: string;
+  entityCount: number;
+  contentCount: number;
+  bulletCount: number;
+  hash: string;
+  [key: string]: unknown;
+}
+
+export interface PreservationSnapshot {
+  id?: string;
+  timestamp?: string;
+  sections: SectionFingerprint[];
+  entityIds: {
+    experience: string[];
+    education: string[];
+    skills: string[];
+    languages: string[];
+    projects: string[];
+    certifications: string[];
+    dynamicSections: string[];
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
 }

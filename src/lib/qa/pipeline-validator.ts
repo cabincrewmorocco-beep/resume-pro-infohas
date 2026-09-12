@@ -34,9 +34,9 @@ export function validateSectionParity(
     if (r.languages.length > 0) sections.push("languages");
     if (r.certifications.length > 0) sections.push("certifications");
     if (r.projects.length > 0) sections.push("projects");
-    if (r.achievements && r.achievements.length > 0) sections.push("achievements");
+    if (r.achievements && Array.isArray(r.achievements) && r.achievements.length > 0) sections.push("achievements");
     if (r.dynamicSections && r.dynamicSections.length > 0) {
-      r.dynamicSections.forEach((ds) => sections.push(`dynamic:${ds.normalizedTitle}`));
+      r.dynamicSections.forEach((ds) => sections.push(`dynamic:${(ds as any).normalizedTitle || ds.title}`));
     }
     return sections;
   };
@@ -105,8 +105,8 @@ export function validateImmutability(
   });
 
   // Check languages preserved
-  const expectedLangNames = expected.languages.map((l) => l.name.toLowerCase());
-  const actualLangNames = actual.languages.map((l) => l.name.toLowerCase());
+  const expectedLangNames = (expected.languages || []).map((l) => (l.language || l.name || "").toLowerCase());
+  const actualLangNames = (actual.languages || []).map((l) => (l.language || l.name || "").toLowerCase());
   expectedLangNames.forEach((name) => {
     if (actualLangNames.indexOf(name) === -1) {
       violations.push({ field: "language", expected: name, actual: "(missing)" });

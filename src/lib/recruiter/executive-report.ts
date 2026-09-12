@@ -126,7 +126,10 @@ export function renderReportMarkdown(report: ExecutiveReport): string {
   lines.push(`## Risk Assessment`);
   lines.push(report.riskAssessment);
   lines.push("");
-  lines.push(`## Hiring Recommendation: ${report.hiringRecommendation.toUpperCase()}`);
+  const recStr = typeof report.hiringRecommendation === "string"
+    ? report.hiringRecommendation
+    : (report.hiringRecommendation as any)?.verdict || "UNKNOWN";
+  lines.push(`## Hiring Recommendation: ${recStr.toUpperCase()}`);
   lines.push("");
   lines.push(`## Follow-up Questions`);
   lines.push(report.followUpQuestions.length ? report.followUpQuestions.map((q) => `- ${q}`).join("\n") : "- None");

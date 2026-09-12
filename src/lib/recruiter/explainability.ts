@@ -19,12 +19,12 @@ export function buildExplainability(ci: CandidateIntelligence): ExplainabilityNo
         label: "Core Competencies",
         score: ci.competencies?.overallScore || 80,
         expandable: true,
-        children: (ci.competencies?.competencies || []).map((c, i) => ({
+        children: Object.values(ci.competencies?.competencies || ci.competencySummary || {}).map((c: any, i: number) => ({
           id: `comp_${i}`,
           kind: "evidence",
-          label: c.name,
-          score: c.score,
-          summary: c.evidence?.join("; ") || "",
+          label: c.label || c.name || c.key || `Competency ${i + 1}`,
+          score: c.score || 0,
+          summary: Array.isArray(c.evidence) ? c.evidence.join("; ") : String(c.evidence || ""),
           expandable: false,
           children: [],
         })),

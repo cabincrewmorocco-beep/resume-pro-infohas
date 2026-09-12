@@ -7,6 +7,7 @@ import { Icon, Badge, ScoreRing } from "@/components/shared";
 import { useApp } from "@/lib/store";
 import { TEMPLATES } from "@/lib/brand";
 import { dueFollowUps } from "@/lib/applications-logic";
+import { ResumeStrengthGauge } from "./ResumeStrengthGauge";
 
 export function Dashboard() {
   const user = useApp((s) => s.user);
@@ -118,6 +119,9 @@ export function Dashboard() {
           </motion.button>
         ))}
       </div>
+
+      {/* Real-time Resume Strength Gauge */}
+      <ResumeStrengthGauge onNavigate={(view) => setView(view as any)} />
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Quick actions */}

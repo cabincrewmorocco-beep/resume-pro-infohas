@@ -8,6 +8,7 @@ export interface RegressionBaseline {
 
 export interface RegressionResult {
   hasRegression: boolean;
+  regressed?: boolean;
   score: number;
   suiteName: string;
   regressions: string[];
@@ -38,8 +39,10 @@ export function checkRegression(
     }
   }
 
+  const hasRegression = regressions.length > 0;
   return {
-    hasRegression: regressions.length > 0,
+    hasRegression,
+    regressed: hasRegression,
     score: regressions.length === 0 ? 100 : Math.max(0, 100 - regressions.length * 20),
     suiteName,
     regressions,

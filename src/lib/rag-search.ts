@@ -36,7 +36,8 @@ export function searchCareerMaterials(
   for (const token of queryTokens) {
     let count = 0;
     for (const doc of materials) {
-      if (doc.contentText.toLowerCase().includes(token)) {
+      const text = (doc.contentText || doc.content || "");
+      if (text.toLowerCase().includes(token)) {
         count++;
       }
     }
@@ -44,7 +45,8 @@ export function searchCareerMaterials(
   }
 
   for (const doc of materials) {
-    const docTokens = tokenize(doc.contentText);
+    const text = (doc.contentText || doc.content || "");
+    const docTokens = tokenize(text);
     const docLen = docTokens.length;
     if (docLen === 0) continue;
 
@@ -66,14 +68,14 @@ export function searchCareerMaterials(
 
     if (score > 0) {
       // Find a snippet around matching keywords
-      let snippet = doc.contentText.slice(0, 200);
-      const lowerContent = doc.contentText.toLowerCase();
+      let snippet = text.slice(0, 200);
+      const lowerContent = text.toLowerCase();
       for (const token of queryTokens) {
         const idx = lowerContent.indexOf(token);
         if (idx !== -1) {
           const start = Math.max(0, idx - 80);
-          const end = Math.min(doc.contentText.length, idx + 120);
-          snippet = (start > 0 ? "..." : "") + doc.contentText.slice(start, end).trim() + (end < doc.contentText.length ? "..." : "");
+          const end = Math.min(text.length, idx + 120);
+          snippet = (start > 0 ? "..." : "") + text.slice(start, end).trim() + (end < text.length ? "..." : "");
           break;
         }
       }
