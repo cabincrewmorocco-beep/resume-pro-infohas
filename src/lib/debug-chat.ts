@@ -69,7 +69,7 @@ TELEMETRY:
 - Avg QA confidence: ${telemetry.performance.avgQAConfidence}/100
 - Avg ATS score: ${telemetry.performance.avgAtsScore}/100
 - Provider failures: ${telemetry.providerFailures.length}
-- Pipeline failures: ${telemetry.pipelineFailures.length}
+- Pipeline failures: ${telemetry.performance.totalFailures}
 
 When you suggest fixes, format them as actionable items that the user can click to execute.
 Available actions: [Apply Patch], [Run Query], [Rollback], [Sync Providers], [Run Health Check], [Clear Cache]`;

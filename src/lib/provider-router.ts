@@ -11,7 +11,7 @@
 "use client";
 
 import { useApp } from "./store";
-import type { AIProvider } from "./types";
+import type { AIProvider, AIProviderSettings } from "./types";
 import { isProviderInCooldown } from "./provider-cooldown";
 
 // ============================================================================
@@ -135,7 +135,7 @@ export interface RouteResult {
 export function routeProvider(taskCategory: TaskCategory): RouteResult {
   const state = useApp.getState();
   const providers: AIProvider[] = state.providers || [];
-  const settings = state.providerSettings || {};
+  const settings: Partial<AIProviderSettings> = (state.providerSettings as any) || {};
   const activeProviders = providers.filter((p) => p.isActive);
 
   // Filter providers that can handle this task

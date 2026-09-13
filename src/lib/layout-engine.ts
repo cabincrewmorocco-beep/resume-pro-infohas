@@ -36,19 +36,26 @@ export function createPageLayout(
   pageNumber: number,
   theme: ResumeTheme,
 ): PageLayout {
-  const { widthMm, heightMm } = getPageDimensionsMm(theme.pageSize);
+  const pageSize: "A4" | "Letter" = theme.pageSize === "A4" ? "A4" : "Letter";
+  const { widthMm, heightMm } = getPageDimensionsMm(pageSize);
+  const marginTopMm = theme.marginTopMm ?? 6.35;
+  const marginBottomMm = theme.marginBottomMm ?? 6.35;
+  const marginLeftMm = theme.marginLeftMm ?? 8.89;
+  const marginRightMm = theme.marginRightMm ?? 8.89;
+  const usableWidthMm = widthMm - marginLeftMm - marginRightMm;
+  const usableHeightMm = heightMm - marginTopMm - marginBottomMm;
   return {
     pageNumber,
     widthMm,
     heightMm,
-    marginTopMm: theme.marginTopMm,
-    marginBottomMm: theme.marginBottomMm,
-    marginLeftMm: theme.marginLeftMm,
-    marginRightMm: theme.marginRightMm,
-    usableWidthMm: widthMm - theme.marginLeftMm - theme.marginRightMm,
-    usableHeightMm: heightMm - theme.marginTopMm - theme.marginBottomMm,
+    marginTopMm,
+    marginBottomMm,
+    marginLeftMm,
+    marginRightMm,
+    usableWidthMm,
+    usableHeightMm,
     currentY: 0,
-    remainingHeightMm: heightMm - theme.marginTopMm - theme.marginBottomMm,
+    remainingHeightMm: usableHeightMm,
     overflow: false,
   };
 }
@@ -101,8 +108,8 @@ export function estimateTotalHeightMm(
   for (const node of nodes) {
     total += estimateNodeHeightMm(node, usableWidthMm, theme);
     // Add margins
-    if (node.style.marginTopMm) total += node.style.marginTopMm;
-    if (node.style.marginBottomMm) total += node.style.marginBottomMm;
+    if (node.style?.marginTopMm) total += node.style.marginTopMm;
+    if (node.style?.marginBottomMm) total += node.style.marginBottomMm;
   }
   return total;
 }
@@ -122,13 +129,13 @@ export function layoutNodes(
   const positionedNodes: RenderNode[] = [];
 
   for (const node of nodes) {
-    const estimatedHeight = estimateNodeHeightMm(node, currentPage.usableWidthMm, theme);
-    const marginTop = node.style.marginTopMm || 0;
-    const marginBottom = node.style.marginBottomMm || 0;
+    const estimatedHeight = estimateNodeHeightMm(node, currentPage.usableWidthMm ?? 180, theme);
+    const marginTop = node.style?.marginTopMm || 0;
+    const marginBottom = node.style?.marginBottomMm || 0;
     const totalHeight = estimatedHeight + marginTop + marginBottom;
 
     // Check if node fits on current page
-    if (currentPage.remainingHeightMm < totalHeight && currentPage.currentY > 0) {
+    if ((currentPage.remainingHeightMm ?? 0) < totalHeight && (currentPage.currentY ?? 0) > 0) {
       // Start a new page
       currentPage = createPageLayout(pages.length, theme);
       pages.push(currentPage);
@@ -137,17 +144,17 @@ export function layoutNodes(
     // Position the node
     const position: RenderNodePosition = {
       page: currentPage.pageNumber,
-      order: currentPage.currentY > 0
+      order: (currentPage.currentY ?? 0) > 0
         ? positionedNodes.filter((n) => n.position?.page === currentPage.pageNumber).length
         : 0,
-      xMm: theme.marginLeftMm,
-      yMm: theme.marginTopMm + currentPage.currentY + marginTop,
-      widthMm: currentPage.usableWidthMm,
+      xMm: theme.marginLeftMm ?? 8.89,
+      yMm: (theme.marginTopMm ?? 6.35) + (currentPage.currentY ?? 0) + marginTop,
+      widthMm: currentPage.usableWidthMm ?? 180,
       heightMm: estimatedHeight,
     };
 
-    currentPage.currentY += totalHeight;
-    currentPage.remainingHeightMm -= totalHeight;
+    currentPage.currentY = (currentPage.currentY ?? 0) + totalHeight;
+    currentPage.remainingHeightMm = (currentPage.remainingHeightMm ?? 0) - totalHeight;
 
     const positionedNode: RenderNode = {
       ...node,
@@ -157,12 +164,15 @@ export function layoutNodes(
   }
 
   // Check overflow
-  const hasOverflow = currentPage.currentY > (currentPage.heightMm - currentPage.marginTopMm - currentPage.marginBottomMm);
+  const currentY = currentPage.currentY ?? 0;
+  const marginTopMm = currentPage.marginTopMm ?? 6.35;
+  const marginBottomMm = currentPage.marginBottomMm ?? 6.35;
+  const hasOverflow = currentY > (currentPage.heightMm - marginTopMm - marginBottomMm);
 
   return {
     pages: pages.map((p) => ({
       ...p,
-      overflow: p.remainingHeightMm < 0,
+      overflow: (p.remainingHeightMm ?? 0) < 0,
     })),
     nodes: positionedNodes,
     totalPages: pages.length,
@@ -174,8 +184,11 @@ export function layoutNodes(
  * Detect if content overflows a single page.
  */
 export function detectOverflow(estimatedTotalMm: number, theme: ResumeTheme): boolean {
-  const { heightMm } = getPageDimensionsMm(theme.pageSize);
-  const usableHeight = heightMm - theme.marginTopMm - theme.marginBottomMm;
+  const pageSize: "A4" | "Letter" = theme.pageSize === "A4" ? "A4" : "Letter";
+  const { heightMm } = getPageDimensionsMm(pageSize);
+  const marginTop = theme.marginTopMm ?? 6.35;
+  const marginBottom = theme.marginBottomMm ?? 6.35;
+  const usableHeight = heightMm - marginTop - marginBottom;
   return estimatedTotalMm > usableHeight;
 }
 
@@ -190,22 +203,22 @@ export function suggestCompression(
   const steps: string[] = [];
 
   // Step 1: reduce line spacing
-  if (theme.lineHeightMm > 3.2) {
+  if ((theme.lineHeightMm ?? 4.2) > 3.2) {
     steps.push("reduce-line-spacing");
   }
 
   // Step 2: reduce section gap
-  if (theme.sectionGapMm > 1.5) {
+  if ((theme.sectionGapMm ?? 3.0) > 1.5) {
     steps.push("reduce-section-gap");
   }
 
   // Step 3: reduce margins
-  if (theme.marginTopMm > 4) {
+  if ((theme.marginTopMm ?? 6.35) > 4) {
     steps.push("reduce-margins");
   }
 
   // Step 4: reduce body font size
-  if (theme.bodyFontSizePt > 9) {
+  if ((theme.bodyFontSizePt ?? 10) > 9) {
     steps.push("reduce-font-size");
   }
 

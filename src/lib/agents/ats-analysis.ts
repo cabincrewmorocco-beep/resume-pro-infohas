@@ -117,7 +117,19 @@ export interface ATSRecommendation {
  *   - Per-score explanations
  *   - Traceable recommendations (each linked to the score it affects)
  */
-export function analyzeATS(resume: ResumeData, jd?: JobDescription | null): ATSAnalysisResult {
+export function analyzeATS(resumeRaw: ResumeData, jd?: JobDescription | null): ATSAnalysisResult {
+  const resume: ResumeData = {
+    ...resumeRaw,
+    experience: (resumeRaw?.experience || []).map((e) => ({ ...e, bullets: e?.bullets || [] })),
+    education: resumeRaw?.education || [],
+    skills: (resumeRaw?.skills || []).filter((s) => s && s.name),
+    projects: resumeRaw?.projects || [],
+    certifications: resumeRaw?.certifications || [],
+    languages: resumeRaw?.languages || [],
+    achievements: resumeRaw?.achievements || [],
+    contact: resumeRaw?.contact || { email: "", phone: "", location: "" },
+  };
+
   // === Base scores from the existing engine ===
   const base = scoreATS(resume, jd ?? undefined);
 
@@ -678,15 +690,16 @@ function buildRecommendations(
 function calculateSkillsMatch(resume: ResumeData, jd?: JobDescription | null): number {
   if (!jd) return 80;
   const jdSkills = [...(jd.requiredSkills || []), ...(jd.preferredSkills || [])];
+  const resumeSkills = resume.skills || [];
   if (jdSkills.length === 0) {
     // KEYWORD QUALITY FIX: filter junk tokens from the keyword fallback so a
     // fragmented JD doesn't drag the skills-match score down with noise.
     const jdKeywords = filterJunkKeywords(jd.keywords || []);
     if (jdKeywords.length === 0) return 80;
-    const matched = jdKeywords.filter(k => resume.skills.some(s => s.name.toLowerCase().includes(k.toLowerCase())));
+    const matched = jdKeywords.filter(k => resumeSkills.some(s => s?.name && s.name.toLowerCase().includes(k.toLowerCase())));
     return Math.round((matched.length / jdKeywords.length) * 100);
   }
-  const matched = jdSkills.filter(js => resume.skills.some(s => s.name.toLowerCase().includes(js.toLowerCase()) || js.toLowerCase().includes(s.name.toLowerCase())));
+  const matched = jdSkills.filter(js => resumeSkills.some(s => s?.name && (s.name.toLowerCase().includes(js.toLowerCase()) || js.toLowerCase().includes(s.name.toLowerCase()))));
   return Math.round((matched.length / jdSkills.length) * 100);
 }
 
@@ -694,7 +707,7 @@ function calculateJobTitleMatch(resume: ResumeData, jd?: JobDescription | null):
   if (!jd || !jd.title) return 85;
   const cleanJdTitle = jd.title.toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
   const cleanHeadline = (resume.headline || "").toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
-  const cleanLastJobTitle = (resume.experience[0]?.title || "").toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
+  const cleanLastJobTitle = (resume.experience?.[0]?.title || "").toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
   
   if (cleanHeadline.includes(cleanJdTitle) || cleanJdTitle.includes(cleanHeadline)) return 100;
   if (cleanLastJobTitle.includes(cleanJdTitle) || cleanJdTitle.includes(cleanLastJobTitle)) return 95;
@@ -726,19 +739,19 @@ function calculateIndustryMatch(resume: ResumeData, jd?: JobDescription | null):
 }
 
 function calculateAchievementDensity(resume: ResumeData): number {
-  const bullets = resume.experience.flatMap(e => e.bullets);
+  const bullets = (resume.experience || []).flatMap(e => e?.bullets || []);
   if (bullets.length === 0) return 0;
-  const quantified = bullets.filter(b => /\d+%|\$\d|\d+x|\d{2,}/.test(b)).length;
+  const quantified = bullets.filter(b => b && /\d+%|\$\d|\d+x|\d{2,}/.test(b)).length;
   return Math.round((quantified / bullets.length) * 100);
 }
 
 function calculateParsingQuality(resume: ResumeData): number {
   let score = 100;
   if (!resume.name || resume.name.length < 3) score -= 30;
-  if (!resume.contact.email || !resume.contact.email.includes("@")) score -= 20;
-  if (!resume.contact.phone) score -= 15;
-  if (resume.experience.length === 0) score -= 20;
-  if (resume.education.length === 0) score -= 15;
+  if (!resume.contact?.email || !resume.contact.email.includes("@")) score -= 20;
+  if (!resume.contact?.phone) score -= 15;
+  if ((resume.experience || []).length === 0) score -= 20;
+  if ((resume.education || []).length === 0) score -= 15;
   return Math.max(0, score);
 }
 
@@ -754,10 +767,10 @@ function calculatePowerWords(resume: ResumeData): number {
 
 function calculateConsistency(resume: ResumeData): number {
   let score = 100;
-  const bullets = resume.experience.flatMap(e => e.bullets);
-  if (bullets.some(b => b.includes(".."))) score -= 10;
-  if (resume.contact.phone && /[\(\)]/.test(resume.contact.phone)) score -= 5;
-  for (const exp of resume.experience) {
+  const bullets = (resume.experience || []).flatMap(e => e?.bullets || []);
+  if (bullets.some(b => b && b.includes(".."))) score -= 10;
+  if (resume.contact?.phone && /[\(\)]/.test(resume.contact.phone)) score -= 5;
+  for (const exp of (resume.experience || [])) {
     if (!exp.startDate || !exp.endDate) {
       score -= 5;
     }

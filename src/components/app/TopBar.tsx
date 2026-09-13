@@ -40,6 +40,7 @@ export function TopBar() {
   const setActiveInterview = useApp((s) => s.setActiveInterview);
   const toggleSidebar = useApp((s) => s.toggleSidebar);
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed);
+  const cloudSyncState = useApp((s) => s.cloudSyncState);
 
   const initials = (user?.name || "U").split(/\s+/).slice(0, 2).map((s) => s[0]?.toUpperCase()).join("");
   const [q, setQ] = useState("");
@@ -140,6 +141,19 @@ export function TopBar() {
   // Build notifications from recent logs + provider status changes
   const notifications = useMemo(() => {
     const items: { id: string; icon: string; color: string; title: string; subtitle: string; time: string; severity: "info" | "warning" | "error" }[] = [];
+
+    // Cloud auto-sync notification
+    if (cloudSyncState?.lastSavedAt) {
+      items.push({
+        id: `cloud-sync-${cloudSyncState.lastSavedAt}`,
+        icon: "CloudCheck",
+        color: "#10B981",
+        title: "Resume Auto-Synced",
+        subtitle: cloudSyncState.message || "All resume edits safely synced to cloud storage",
+        time: timeAgo(new Date(cloudSyncState.lastSavedAt)),
+        severity: "info",
+      });
+    }
 
     // Recent audit logs (last 5)
     for (const l of logs.slice(0, 5)) {
@@ -247,6 +261,29 @@ export function TopBar() {
         </div>
 
         <div className="flex-1 sm:hidden" />
+
+        {/* Cloud Auto-Sync Status Indicator */}
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-all cursor-default select-none border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          title={
+            cloudSyncState?.status === "syncing"
+              ? "Auto-syncing changes to cloud..."
+              : `Cloud Auto-Sync Active: ${cloudSyncState?.message || "All resume changes safely backed up"}`
+          }
+        >
+          {cloudSyncState?.status === "syncing" ? (
+            <>
+              <Icon name="Loader2" className="w-3.5 h-3.5 text-sky-500 animate-spin" />
+              <span className="text-sky-600 dark:text-sky-400 font-medium hidden sm:inline">Syncing...</span>
+            </>
+          ) : (
+            <>
+              <Icon name="CloudCheck" className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="font-semibold">Saved</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            </>
+          )}
+        </div>
 
         {/* Quick actions */}
         <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme" className="hidden sm:flex">

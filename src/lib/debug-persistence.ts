@@ -110,7 +110,7 @@ export function persistDebugArtifacts(artifacts: DebugArtifacts): void {
     bulletsChanged: artifacts.experienceDiff.filter((d) => d.bulletsChanged).length,
     bulletsUnchanged: artifacts.experienceDiff.filter((d) => !d.bulletsChanged).length,
     providerResponseLength: artifacts.providerResponse.length,
-    optimizerOutputExperiences: artifacts.optimizerOutput.experiences?.length ?? 0,
+    optimizerOutputExperiences: (artifacts.optimizerOutput.experience ?? (artifacts.optimizerOutput as any).experiences)?.length ?? 0,
     optimizerOutputSkills: artifacts.optimizerOutput.skills?.length ?? 0,
   };
 

@@ -3,11 +3,17 @@
 // ============================================================================
 
 export interface RenderNodePosition {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  page: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  page?: number;
+  order?: number;
+  xMm?: number;
+  yMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  [key: string]: unknown;
 }
 
 export interface RenderNodeStyle {
@@ -20,6 +26,11 @@ export interface RenderNodeStyle {
   textAlign?: "left" | "center" | "right" | "justify";
   margin?: { top?: number; right?: number; bottom?: number; left?: number };
   padding?: { top?: number; right?: number; bottom?: number; left?: number };
+  marginTopMm?: number;
+  marginBottomMm?: number;
+  marginLeftMm?: number;
+  marginRightMm?: number;
+  [key: string]: unknown;
 }
 
 export interface RenderNode {
@@ -33,34 +44,58 @@ export interface RenderNode {
 }
 
 export interface ResumeTheme {
-  name: string;
-  primaryColor: string;
-  accentColor: string;
-  textColor: string;
-  backgroundColor: string;
-  fontFamily: string;
-  fontSizePt: number;
-  lineSpacing: number;
-  sectionSpacingPt: number;
-  marginMm: number;
+  name?: string;
+  primaryColor?: string;
+  accentColor?: string;
+  textColor?: string;
+  backgroundColor?: string;
+  fontFamily?: string;
+  fontSizePt?: number;
+  lineSpacing?: number;
+  sectionSpacingPt?: number;
+  marginMm?: number;
+  pageSize?: string;
+  lineHeightMm?: number;
+  sectionGapMm?: number;
+  paragraphSpacingMm?: number;
+  marginTopMm?: number;
+  marginBottomMm?: number;
+  marginLeftMm?: number;
+  marginRightMm?: number;
+  bodyFontSizePt?: number;
+  fontSizeMm?: number;
+  [key: string]: unknown;
 }
 
 export interface PageLayout {
   pageNumber: number;
   widthMm: number;
   heightMm: number;
-  nodes: RenderNode[];
-  totalCharCount: number;
-  fillPercentage: number;
+  nodes?: RenderNode[];
+  totalCharCount?: number;
+  fillPercentage?: number;
+  marginTopMm?: number;
+  marginBottomMm?: number;
+  marginLeftMm?: number;
+  marginRightMm?: number;
+  usableWidthMm?: number;
+  usableHeightMm?: number;
+  currentY?: number;
+  remainingHeightMm?: number;
+  overflow?: boolean;
+  [key: string]: unknown;
 }
 
 export interface LayoutResult {
   pages: PageLayout[];
   totalPages: number;
-  totalCharCount: number;
-  isSinglePage: boolean;
+  totalCharCount?: number;
+  isSinglePage?: boolean;
   overflowAmount?: number;
   underflowAmount?: number;
+  nodes?: RenderNode[];
+  hasOverflow?: boolean;
+  [key: string]: unknown;
 }
 
 export type CanonicalSectionType =
@@ -109,9 +144,15 @@ export interface CanonicalResume {
 export type ResumeTemplate = "ats-professional" | "modern" | "classic" | "minimal" | "executive" | "creative" | "technical" | string;
 
 export interface CompressionResult {
-  compressed: boolean;
-  originalCharCount: number;
-  newCharCount: number;
-  reducedPercent: number;
-  actionsApplied: string[];
+  compressed?: boolean;
+  originalCharCount?: number;
+  newCharCount?: number;
+  reducedPercent?: number;
+  actionsApplied?: string[];
+  originalChars?: number;
+  compressedChars?: number;
+  compressionRatio?: number;
+  stepsApplied?: string[];
+  fitsOnOnePage?: boolean;
+  [key: string]: unknown;
 }

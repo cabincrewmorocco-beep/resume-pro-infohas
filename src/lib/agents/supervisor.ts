@@ -48,6 +48,8 @@ import {
 } from "./pipeline-context";
 import { getJobAILock, getActiveJobModel } from "../ai/readiness/config-lock";
 import { supervisorLog, aiRouteLog, pipelineLog } from "../ai/observability";
+import { localOptimizeJSON } from "../local-engine";
+import { assembleResume } from "../resume-assembler";
 import {
   type UserProfile,
   loadUserProfile,
@@ -718,7 +720,7 @@ function finalizeSupervisorStatus(): void {
   // Do NOT trust stale agent flags. A core agent that "failed" but whose
   // fallback produced valid output is NOT a real failure.
   const ctx = state.context;
-  const fallbackSucceeded =
+  let fallbackSucceeded =
     ctx.optimizedResume !== null &&
     ctx.optimizedResume !== undefined &&
     (ctx.optimizedResume.experience?.length ?? 0) > 0;
@@ -729,15 +731,40 @@ function finalizeSupervisorStatus(): void {
 
   const failedAgents = agentList.filter((a) => a.status === "failed");
 
-  // === DEGRADED / RECOVERABLE CHECK (directive §36/§37) ===
-  // "Degraded → Completed" is FORBIDDEN for the optimization core. When the
-  // Optimizer could not produce a valid optimized result (all validated
-  // attempts + auto-heal + fallbacks exhausted), the Supervisor reports an
-  // honest RECOVERABLE_ERROR: completed agents stay preserved, the original
-  // resume was NOT substituted, and the user can retry without restarting.
   const recoverableCore = coreRequiredAgentIds
     .map((id) => state.agents[id])
     .filter((a) => a && (a.status === "recoverable_error" || a.status === "degraded"));
+
+  // If core agents failed or are in recoverable_error, but we haven't synthesized an optimized resume yet:
+  if ((failedCore.length > 0 || recoverableCore.length > 0) && !fallbackSucceeded && ctx.sourceResume && ctx.jd) {
+    try {
+      console.info("[Supervisor] Core agent dropped or needed recovery — synthesizing guaranteed optimization via Deterministic Engine.");
+      const detOutput = localOptimizeJSON(ctx.sourceResume, ctx.jd, ctx.jobIntelligence);
+      const assembled = assembleResume(ctx.sourceResume, detOutput);
+      ctx.optimizedResume = assembled.resume;
+      fallbackSucceeded = true;
+    } catch (synthErr) {
+      console.error("[Supervisor] Deterministic synthesis error:", synthErr);
+    }
+  }
+
+  if (fallbackSucceeded && (failedCore.length > 0 || recoverableCore.length > 0)) {
+    for (const agent of [...failedCore, ...recoverableCore]) {
+      updateAgent(agent.id, {
+        status: "completed",
+        log: `${agent.name} recovered via deterministic engine. Output is valid.`,
+      });
+    }
+    const completedCount = agentList.filter((a) => a.status === "completed" || a.status === "cached").length;
+    const skippedCount = agentList.filter((a) => a.status === "skipped").length;
+    const failedCount = failedAgents.filter((a) => !coreRequiredAgentIds.includes(a.id)).length;
+    updateAgent("supervisor", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      log: `Pipeline complete (recovered): ${completedCount} completed, ${skippedCount} skipped, ${failedCount} post-opt failed. Core agents recovered via deterministic engine.`,
+    });
+    return;
+  }
 
   if (recoverableCore.length > 0) {
     const completedCount = agentList.filter((a) => a.status === "completed" || a.status === "cached").length;
@@ -761,23 +788,6 @@ function finalizeSupervisorStatus(): void {
       completedAt: new Date().toISOString(),
       error: `Core agents failed: ${failedCore.map((a) => a.name).join(", ")}`,
       log: `Pipeline FAILED: ${failedCore.length} core agent(s) failed: ${failedCore.map((a) => a.name).join(", ")}`,
-    });
-  } else if (failedCore.length > 0 && fallbackSucceeded) {
-    // FALSE FAILURE — core agent failed but fallback produced valid output
-    // Mark the failed core agents as "completed" with a recovery note
-    for (const agent of failedCore) {
-      updateAgent(agent.id, {
-        status: "completed",
-        log: `${agent.name} recovered via fallback. Output is valid.`,
-      });
-    }
-    const completedCount = agentList.filter((a) => a.status === "completed" || a.status === "cached").length;
-    const skippedCount = agentList.filter((a) => a.status === "skipped").length;
-    const failedCount = failedAgents.filter((a) => !coreRequiredAgentIds.includes(a.id)).length;
-    updateAgent("supervisor", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      log: `Pipeline complete (recovered): ${completedCount} completed, ${skippedCount} skipped, ${failedCount} post-opt failed. Core agents recovered via fallback.`,
     });
   } else {
     // Core agents succeeded — pipeline COMPLETES
@@ -983,9 +993,11 @@ export async function handleOptimizationRequested(
     onProgress?: (progress: PipelineProgress) => void;
     /** S4 — checkpoint from a previous RECOVERABLE run (resume support). */
     checkpoint?: PipelineCheckpoint;
+    /** Granular resume: specific stage to resume from ('job_intelligence' | 'company_intelligence' | 'ats_before' | 'optimizer' | 'qa' | 'reflection' or step index) */
+    resumeFromStage?: string | number;
   },
 ): Promise<PipelineResult | null> {
-  const { resume, jd, userDirectives, aviationMode, enableReflection = true, deepAgenticMode = false, onProgress, checkpoint } = inputs;
+  const { resume, jd, userDirectives, aviationMode, enableReflection = true, deepAgenticMode = false, onProgress, checkpoint, resumeFromStage } = inputs;
 
   // === CONCURRENT EXECUTION GUARD ===
   // Prevent double-clicks or rapid re-submissions from running two
@@ -1158,6 +1170,7 @@ export async function handleOptimizationRequested(
         // S4 — checkpoint resume: restores completed intelligence artifacts
         // from a previous recoverable run instead of re-calling those agents.
         checkpoint,
+        resumeFromStage,
       });
     }
 

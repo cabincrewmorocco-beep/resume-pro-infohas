@@ -137,8 +137,8 @@ function validateGrammar(resume: ResumeData): ValidationCheck {
 
   // Basic grammar checks
   // 1. Check for ALL CAPS words (excluding acronyms)
-  const allText = [resume.summary, resume.headline, resume.name]
-    .concat(resume.experience.flatMap((e) => [e.title, e.company, ...e.bullets]))
+  const allText = [resume?.summary, resume?.headline, resume?.name]
+    .concat((resume?.experience || []).flatMap((e) => [e?.title, e?.company, ...(e?.bullets || [])]))
     .filter(Boolean)
     .join(" ");
 
@@ -176,39 +176,39 @@ function validateATS(resume: ResumeData): ValidationCheck {
 
   // ATS-friendly checks:
   // 1. No special characters in name
-  if (resume.name && /[<>{}[\]|\\\/]/.test(resume.name)) {
+  if (resume?.name && /[<>{}[\]|\\\/]/.test(resume.name)) {
     errors.push("Special characters in name (not ATS-friendly)");
   }
 
   // 2. Contact info present
-  if (!resume.contact?.email && !resume.contact?.phone) {
+  if (!resume?.contact?.email && !resume?.contact?.phone) {
     errors.push("Missing contact information (email or phone)");
   }
 
   // 3. No tables/columns — check for pipe characters in key fields
   // Pipes in experience titles and company names are particularly harmful
-  for (const e of resume.experience) {
-    if (e.title && e.title.includes("|")) {
+  for (const e of (resume?.experience || [])) {
+    if (e?.title && e.title.includes("|")) {
       errors.push(`Pipe character in job title: "${e.title}"`);
     }
-    if (e.company && e.company.includes("|")) {
+    if (e?.company && e.company.includes("|")) {
       errors.push(`Pipe character in company name: "${e.company}"`);
     }
   }
-  const allText = JSON.stringify(resume);
+  const allText = JSON.stringify(resume || {});
   if ((allText.match(/\|/g) || []).length > 5) {
     errors.push("Pipe characters detected (possible table formatting — not ATS-friendly)");
   }
 
   // 4. Experience entries have dates
-  for (const e of resume.experience) {
-    if (!e.startDate && !e.endDate) {
-      errors.push(`Experience entry "${e.title}" missing dates`);
+  for (const e of (resume?.experience || [])) {
+    if (!e?.startDate && !e?.endDate) {
+      errors.push(`Experience entry "${e?.title || 'Unknown'}" missing dates`);
     }
   }
 
   // 5. Skills are present and not empty
-  if (resume.skills.some((s) => !s.name || s.name.length < 2)) {
+  if ((resume?.skills || []).some((s) => !s?.name || s.name.length < 2)) {
     errors.push("Some skills have empty or too-short names");
   }
 
@@ -261,23 +261,23 @@ function validatePageFit(resume: ResumeData): ValidationCheck {
   let estimatedLines = 0;
 
   // Summary: ~1 line per 12 words
-  if (resume.summary) {
+  if (resume?.summary) {
     estimatedLines += Math.ceil(resume.summary.split(/\s+/).length / 12);
   }
 
   // Skills: 1 line per group (assume 4 groups)
-  estimatedLines += Math.min(4, Math.ceil(resume.skills.length / 3));
+  estimatedLines += Math.min(4, Math.ceil((resume?.skills?.length ?? 0) / 3));
 
   // Experience: 1 header line + 1 line per bullet per entry
-  for (const e of resume.experience) {
-    estimatedLines += 1 + e.bullets.length;
+  for (const e of (resume?.experience || [])) {
+    estimatedLines += 1 + (e?.bullets?.length ?? 0);
   }
 
   // Education: 1 line per entry
-  estimatedLines += resume.education.length;
+  estimatedLines += (resume?.education?.length ?? 0);
 
   // Languages: 1 line per entry
-  estimatedLines += resume.languages.length;
+  estimatedLines += (resume?.languages?.length ?? 0);
 
   const MAX_LINES = 35; // conservative estimate for one A4 page
   const fits = estimatedLines <= MAX_LINES;

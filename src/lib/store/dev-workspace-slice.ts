@@ -50,7 +50,7 @@ export interface DevWorkspaceSlice {
   addAIDevReport: (report: AIDevReport) => void;
   setAIHealingIssues: (issues: AIHealingIssue[]) => void;
   updateAIHealingIssue: (id: string, patch: Partial<AIHealingIssue>) => void;
-  setAIHealingProgress: (progress: number) => void;
+  setAIHealingProgress: (progress: number | { status?: string; currentStep?: string; progressPercent?: number; [key: string]: unknown }) => void;
   setAIHealingReport: (report: AIHealingReport | null) => void;
 }
 
@@ -81,6 +81,7 @@ export const createDevWorkspaceSlice: StateCreator<AppState, [], [], DevWorkspac
   setAIHealingIssues: (issues: AIHealingIssue[]) => set({ aiHealingIssues: issues }),
   updateAIHealingIssue: (id: string, patch: Partial<AIHealingIssue>) =>
     set((s) => ({ aiHealingIssues: s.aiHealingIssues.map((i) => (i.id === id ? { ...i, ...patch } : i)) })),
-  setAIHealingProgress: (progress: number) => set({ aiHealingProgress: progress }),
+  setAIHealingProgress: (progress: number | { status?: string; currentStep?: string; progressPercent?: number; [key: string]: unknown }) =>
+    set({ aiHealingProgress: typeof progress === "number" ? progress : (progress.progressPercent ?? 0) }),
   setAIHealingReport: (report: AIHealingReport | null) => set({ aiHealingReport: report }),
 });

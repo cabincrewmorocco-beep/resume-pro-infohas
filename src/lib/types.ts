@@ -22,6 +22,14 @@ export type ResumeRegion = "gulf" | "us" | "uk_eu" | "apac";
 export type TextAlignment = "left" | "center" | "right" | "justify";
 export type ResumeTemplate = "modern" | "classic" | "minimal" | "executive" | "creative" | "technical" | string;
 
+export interface CloudSyncState {
+  status: "idle" | "syncing" | "saved" | "error";
+  lastSavedAt: number | null;
+  resumeId: string | null;
+  message?: string;
+  error?: string | null;
+}
+
 export interface ContactInfo {
   name?: string;
   email?: string;
@@ -101,26 +109,51 @@ export interface ResumeProject {
 export interface DynamicSection {
   id: string;
   title: string;
+  normalizedTitle?: string;
   type?: string;
   items?: any[];
   content?: string;
+  bullets?: string[];
   [key: string]: unknown;
 }
 
 export interface ResumeLayoutModel {
   template?: string;
   font?: string;
+  fontFamily?: string;
   fontSize?: number;
   bodyFontSizePt?: number;
   headingFontSizePt?: number;
+  sectionTitleSizePt?: number;
+  nameSizePt?: number;
+  nameColor?: string;
+  sectionTitleColor?: string;
+  bodyTextColor?: string;
+  contactColor?: string;
   margins?: { top?: number; bottom?: number; left?: number; right?: number };
+  marginLeftMm?: number;
+  marginRightMm?: number;
+  marginTopMm?: number;
+  marginBottomMm?: number;
   lineSpacing?: number;
+  lineHeightMm?: number;
   sectionSpacing?: number;
+  sectionGapMm?: number;
+  headerGapMm?: number;
+  columnGapMm?: number;
+  columns?: number;
   primaryColor?: string;
   accentColor?: string;
   alignment?: TextAlignment;
+  bodyAlignment?: TextAlignment;
   sectionAlignment?: Record<string, TextAlignment>;
   compact?: boolean;
+  photoWidthMm?: number;
+  photoHeightMm?: number;
+  photoSizeMm?: number;
+  photoBorderRadius?: number;
+  bulletIndentMm?: number;
+  contactSpacing?: string;
   [key: string]: unknown;
 }
 
@@ -132,23 +165,28 @@ export interface ResumeData {
   id: string;
   title?: string;
   name?: string;
+  headline?: string;
   targetRole?: string;
   targetRegion?: ResumeRegion;
   photoUrl?: string;
   dateOfBirth?: string;
   contact?: ContactInfo;
   summary?: string;
-  experience?: ResumeExperience[];
-  education?: ResumeEducation[];
-  skills?: ResumeSkill[];
-  languages?: ResumeLanguage[];
+  experience: ResumeExperience[];
+  education: ResumeEducation[];
+  skills: ResumeSkill[];
+  languages: ResumeLanguage[];
   certifications?: ResumeCertification[];
   projects?: ResumeProject[];
+  achievements?: any[];
+  additionalInfo?: string;
+  accentColor?: string;
   dynamicSections?: DynamicSection[];
   layout?: ResumeLayoutModel;
   template?: ResumeTemplate;
   templateId?: string;
   atsScore?: number;
+  source?: string;
   createdAt?: string;
   updatedAt?: string;
   [key: string]: unknown;
@@ -159,10 +197,15 @@ export interface JobDescription {
   title: string;
   company?: string;
   location?: string;
+  url?: string;
   rawText?: string;
   content?: string;
   keywords?: string[];
   requirements?: string[];
+  requiredSkills?: string[];
+  preferredSkills?: string[];
+  responsibilities?: string[];
+  technologies?: string[];
   analysis?: any;
   createdAt?: string;
   updatedAt?: string;
@@ -183,18 +226,44 @@ export interface CoverLetter {
   [key: string]: unknown;
 }
 
+export interface ATSScoreBreakdown {
+  ats?: number;
+  formatting?: number;
+  keywords?: number;
+  content?: number;
+  grammar?: number;
+  completeness?: number;
+  [key: string]: unknown;
+}
+
+export interface ATSRecommendation {
+  id?: string;
+  type?: string;
+  category?: string;
+  title?: string;
+  message?: string;
+  severity?: "low" | "medium" | "high" | "critical" | string;
+  action?: string;
+  [key: string]: unknown;
+}
+
 export interface ATSReport {
   id: string;
   resumeId: string;
   jdId?: string;
-  overallScore: number;
+  overallScore?: number;
   score?: number;
+  scores?: ATSScoreBreakdown;
+  recommendations?: ATSRecommendation[] | string[];
+  missingKeywords?: string[];
+  matchedKeywords?: string[];
+  weakSections?: string[];
+  jdMatchPercent?: number;
+  detectedCliches?: string[];
   matchRate?: number;
   hardSkillsScore?: number;
   softSkillsScore?: number;
   formatScore?: number;
-  missingKeywords?: string[];
-  matchedKeywords?: string[];
   suggestions?: string[];
   breakdown?: Record<string, number>;
   timestamp?: string;
@@ -239,7 +308,8 @@ export interface InterviewPackage {
 
 export interface InterviewScenario {
   id: string;
-  title: string;
+  title?: string;
+  name?: string;
   role?: string;
   industry?: string;
   description?: string;
@@ -308,6 +378,8 @@ export interface AIProvider {
   streamingEnabled?: boolean;
   authType?: string;
   apiKey?: string;
+  alternateApiKeys?: string[];
+  headersJson?: string;
   costPerInputToken?: number;
   costPerOutputToken?: number;
   status?: string;
@@ -319,14 +391,14 @@ export interface AIProvider {
 export interface AIProviderLog {
   id: string;
   providerId: string;
-  timestamp: string;
+  timestamp?: string;
   createdAt?: string;
   model?: string;
   tokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   latencyMs?: number;
-  success: boolean;
+  success?: boolean;
   status?: string;
   error?: string;
   promptPreview?: string;
@@ -335,8 +407,8 @@ export interface AIProviderLog {
 }
 
 export interface AIProviderSettings {
-  defaultProviderId: string | null;
-  fallbackEnabled: boolean;
+  defaultProviderId?: string | null;
+  fallbackEnabled?: boolean;
   fallbackProviderIds?: string[];
   autoRotateKeys?: boolean;
   maxRetries?: number;
@@ -352,7 +424,7 @@ export interface FallbackChainEntry {
 
 export interface FallbackChainConfig {
   enabled: boolean;
-  chain: FallbackChainEntry[] | any[];
+  chain?: FallbackChainEntry[] | any[];
   entries?: any[];
   autoHeal?: boolean;
   [key: string]: unknown;
@@ -363,7 +435,8 @@ export interface PromptTemplate {
   name: string;
   description?: string;
   category: string;
-  prompt: string;
+  prompt?: string;
+  content?: string;
   systemPrompt?: string;
   version?: any;
   isActive?: boolean;
@@ -403,24 +476,169 @@ export interface FeatureFlags {
   [key: string]: unknown;
 }
 
-export interface OptimizerDirectiveConfig {
-  bodyFontSizePt?: number;
-  headingFontSizePt?: number;
-  lineSpacing?: number;
-  sectionSpacing?: number;
-  targetCharCount?: number;
+export interface AgentSupervisorDirectives {
+  strictMode?: boolean;
+  enableRetries?: boolean;
+  enableProviderSwitch?: boolean;
+  enforceImmutableEntities?: boolean;
+  enableDebugLogs?: boolean;
+  enableDiffViewer?: boolean;
+  temperature?: number;
+  [key: string]: unknown;
+}
+
+export interface AgentSummaryDirectives {
+  atsAggressiveness?: number;
+  preserveFacts?: boolean;
+  maxCharacters?: number;
+  minCharacters?: number;
+  [key: string]: unknown;
+}
+
+export interface AgentSkillsDirectives {
+  maxKeywords?: number;
+  allowTransferableSkills?: boolean;
+  allowCompanyKeywords?: boolean;
+  allowLocationKeywords?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentExperienceDirectives {
+  rewriteBulletsOnly?: boolean;
+  rewriteTitle?: boolean;
+  rewriteCompany?: boolean;
+  rewriteDates?: boolean;
+  rewriteLocation?: boolean;
+  maxExpansionPercent?: number;
+  [key: string]: unknown;
+}
+
+export interface AgentEducationDirectives {
+  formatOnly?: boolean;
+  stripSectionHeaders?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentLanguagesDirectives {
+  formatOnly?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentGuardianDirectives {
+  enforceEntityIntegrity?: boolean;
+  enforcePageUtilization?: boolean;
+  enforceContentLength?: boolean;
+  enforceNoDuplicates?: boolean;
+  enforceSummaryQuality?: boolean;
+  minimumScore?: number;
+  [key: string]: unknown;
+}
+
+export interface AgentAdditionalInfoDirectives {
+  preserveSection?: boolean;
+  improveWording?: boolean;
+  stripSectionHeaders?: boolean;
+  [key: string]: unknown;
+}
+
+export interface AgentHeadlineDirectives {
+  rewriteHeadline?: boolean;
+  maxHeadlineChars?: number;
+  headlineTone?: "exact-title-match" | "seniority-adjusted" | "jd-aligned" | "preserve";
+  [key: string]: unknown;
+}
+
+export interface AgentCertificationsDirectives {
+  formatOnly?: boolean;
+  stripExpiredCerts?: boolean;
+  maxCertAgeYears?: number;
+  maxCertEntries?: number;
+  [key: string]: unknown;
+}
+
+export interface AgentDirectives {
+  supervisor?: AgentSupervisorDirectives;
+  summary?: AgentSummaryDirectives;
+  skills?: AgentSkillsDirectives;
+  experience?: AgentExperienceDirectives;
+  education?: AgentEducationDirectives;
+  languages?: AgentLanguagesDirectives;
+  guardian?: AgentGuardianDirectives;
+  additionalInfo?: AgentAdditionalInfoDirectives;
+  headline?: AgentHeadlineDirectives;
+  certifications?: AgentCertificationsDirectives;
   [key: string]: unknown;
 }
 
 export interface ToneWritingConfig {
   tone?: string;
   actionVerbStrength?: string;
+  bulletVerbTense?: string;
+  avoidPassiveVoice?: boolean;
+  enforcePowerVerbs?: boolean;
+  avoidFillerPhrases?: boolean;
+  requireQuantification?: boolean;
+  experienceFormula?: "auto" | "star" | "xyz";
   brevity?: string;
+  [key: string]: unknown;
 }
 
 export interface CustomKeywordsConfig {
   include?: string[];
   exclude?: string[];
+  requiredKeywords?: string[];
+  forbiddenKeywords?: string[];
+  keywordPlacement?: string;
+  [key: string]: unknown;
+}
+
+export interface OptimizerDirectiveConfig {
+  selectedStructuralBlueprintId?: string;
+  pageSize?: string;
+  marginTopMm?: number;
+  marginBottomMm?: number;
+  marginLeftMm?: number;
+  marginRightMm?: number;
+  fontFamily?: string;
+  bodyFontSizePt?: number;
+  headingFontSizePt?: number;
+  sectionTitleSizePt?: number;
+  nameSizePt?: number;
+  nameColor?: string;
+  sectionTitleColor?: string;
+  bodyTextColor?: string;
+  lineHeight?: number;
+  lineSpacing?: number;
+  sectionSpacing?: number;
+  sectionGapMm?: number;
+  bulletIndentMm?: number;
+  photoEnabled?: boolean;
+  photoWidthMm?: number;
+  photoHeightMm?: number;
+  showPlaceholderIfNoPhoto?: boolean;
+  summaryMinWords?: number;
+  summaryMaxWords?: number;
+  skillsMaxGroups?: number;
+  experienceMaxEntries?: number;
+  experienceBulletsPerEntry?: number;
+  educationMaxEntries?: number;
+  languagesMaxEntries?: number;
+  enforceOnePage?: boolean;
+  minFontSizePt?: number;
+  targetCharCount?: number;
+  sectionLimits?: Record<string, { min: number; max: number }>;
+  customDirectiveOverride?: string;
+  agentDirectives?: AgentDirectives;
+  bodyAlignment?: string;
+  sectionAlignment?: Record<string, any>;
+  targetAtsSystem?: string;
+  toneConfig?: ToneWritingConfig;
+  customKeywords?: CustomKeywordsConfig;
+  sectionOrder?: string[];
+  dateFormat?: "auto" | "month-year" | "short-date" | "year-only";
+  contactSpacing?: "stacked" | "single-line";
+  customSectionInstructions?: Record<string, string>;
+  [key: string]: unknown;
 }
 
 export interface AuditLog {
@@ -433,11 +651,43 @@ export interface AuditLog {
   [key: string]: unknown;
 }
 
+export interface AIBuildResult {
+  success: boolean;
+  errors: string[];
+  warnings?: string[];
+  duration?: number;
+  output?: string;
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
+export interface AITestResult {
+  success: boolean;
+  total?: number;
+  passed?: number;
+  failed?: number;
+  skipped?: number;
+  duration?: number;
+  output?: string;
+  failures?: any[];
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
+export interface AIFile {
+  path: string;
+  type: "file" | "directory" | string;
+  language?: string;
+  size?: number;
+  content?: string;
+  [key: string]: unknown;
+}
+
 export interface AITask {
   id: string;
   title: string;
   description?: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "ready" | string;
   progress?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -446,6 +696,7 @@ export interface AITask {
 
 export interface AIWorkspacePatch {
   id: string;
+  title?: string;
   filePath?: string;
   description?: string;
   diff?: string;
@@ -457,7 +708,12 @@ export interface AIWorkspacePatch {
 export interface AIGitBranch {
   name: string;
   isCurrent?: boolean;
+  isStaging?: boolean;
   commitHash?: string;
+  lastCommit?: string;
+  commitCount?: number;
+  createdAt?: string;
+  [key: string]: unknown;
 }
 
 export interface AIGitCommit {
@@ -465,51 +721,154 @@ export interface AIGitCommit {
   message: string;
   author: string;
   timestamp: string;
+  filesChanged?: number | string[];
+  [key: string]: unknown;
 }
 
 export interface AIRollback {
-  id: string;
-  timestamp: string;
-  reason: string;
+  id?: string;
+  timestamp?: string;
+  reason?: string;
   snapshotId?: string;
+  patchId?: string;
+  patchTitle?: string;
+  rolledBackBy?: string;
+  previousState?: string;
+  [key: string]: unknown;
 }
 
 export interface AIDevAgentSettings {
+  providerId?: string;
+  modelName?: string;
+  fallbackProviderId?: string;
+  fallbackModel?: string;
+  timeout?: number;
+  maxTokens?: number;
+  temperature?: number;
+  systemPrompt?: string;
+  focusDirectories?: string[];
+  excludeFilesPattern?: string;
   autoApplyFixes?: boolean;
   testOnCommit?: boolean;
   level?: string;
   [key: string]: unknown;
 }
 
+export interface AIDevIssue {
+  id: string;
+  type: string;
+  severity: "low" | "medium" | "high" | "critical" | "warning" | "info" | "error" | string;
+  file?: string;
+  line?: number | string;
+  title: string;
+  description: string;
+  recommendedFix?: string;
+  suggestedFix?: string;
+  status: "open" | "closed" | "fixed" | "ignored" | string;
+  [key: string]: unknown;
+}
+
+export interface AIDevPatch {
+  id: string;
+  title: string;
+  description: string;
+  diff: string;
+  modifiedFiles?: string[];
+  newFiles?: string[];
+  deletedFiles?: string[];
+  impactAnalysis?: string;
+  riskAnalysis?: "low" | "medium" | "high" | string;
+  generatedTests?: string;
+  status: "draft" | "staging" | "tested" | "approved" | "applied" | "rejected" | string;
+  provider?: string;
+  model?: string;
+  createdAt: string;
+  [key: string]: unknown;
+}
+
+export interface AIDevFeatureFile {
+  path: string;
+  content: string;
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface AIDevFeature {
+  id: string;
+  title: string;
+  description: string;
+  request: string;
+  files: AIDevFeatureFile[];
+  status: "draft" | "staging" | "tested" | "approved" | "applied" | "rejected" | string;
+  provider?: string;
+  model?: string;
+  createdAt: string;
+  [key: string]: unknown;
+}
+
+export interface HealthCheck {
+  area: "frontend" | "backend" | "api" | "database" | "security" | "performance" | "accessibility" | string;
+  score: number;
+  status: "healthy" | "degraded" | "down" | string;
+  details: string;
+  lastChecked: string;
+  [key: string]: unknown;
+}
+
+export interface AppHealthDashboard {
+  overall: number;
+  checks: HealthCheck[];
+  lastFullScan: string;
+  [key: string]: unknown;
+}
+
 export interface AIDevAgentHistory {
   id: string;
-  timestamp: string;
-  summary: string;
+  timestamp?: string;
+  summary?: string;
   type?: string;
   [key: string]: unknown;
 }
 
 export interface AIDevReport {
   id: string;
-  timestamp: string;
-  score: number;
-  findings: string[];
+  type?: string;
+  title?: string;
+  summary?: string;
+  score?: number;
+  timestamp?: string;
+  createdAt?: string;
+  findings?: string[];
+  issues?: AIDevIssue[];
+  provider?: string;
+  model?: string;
+  createdBy?: string;
+  [key: string]: unknown;
 }
 
 export interface AIHealingIssue {
   id: string;
-  component: string;
-  severity: "low" | "medium" | "high" | "critical";
+  component?: string;
+  file?: string;
+  line?: number;
+  area?: string;
+  title?: string;
+  severity: "low" | "medium" | "high" | "critical" | "warning" | "info" | "error";
   description: string;
-  status: "detected" | "healing" | "resolved" | "failed";
+  suggestedFix?: string;
+  code?: string;
+  status: "detected" | "healing" | "resolved" | "failed" | "open" | "closed" | "fixed" | "needs_review";
   resolvedAt?: string;
+  [key: string]: unknown;
 }
 
 export interface AIHealingReport {
   id: string;
   timestamp: string;
   issuesCount: number;
+  issuesFound?: number;
   resolvedCount: number;
+  [key: string]: unknown;
 }
 
 export type ViewKey =
@@ -528,22 +887,56 @@ export type ViewKey =
 export type ATSSystemTarget = "greenhouse" | "lever" | "workday" | "taleo" | "icims" | "generic" | string;
 
 // RenderDocument types for renderers
+export interface RenderDocumentContact {
+  name?: string;
+  headline?: string;
+  email?: string;
+  phone?: string;
+  location?: string;
+  photoUrl?: string;
+  dateOfBirth?: string;
+  linkedin?: string;
+  github?: string;
+  website?: string;
+  [key: string]: unknown;
+}
+
+export interface RenderDocumentSection {
+  type: string;
+  title: string;
+  content?: string;
+  items?: any[];
+  [key: string]: unknown;
+}
+
 export interface RenderDocument {
   id?: string;
   title?: string;
-  layout?: ResumeLayoutModel;
-  sections: any[];
+  template?: string;
+  contact: RenderDocumentContact;
+  layout: ResumeLayoutModel;
+  sections: RenderDocumentSection[];
   [key: string]: unknown;
 }
 
 export interface RenderContentItem {
   id?: string;
+  kind?: "text" | "bullets" | "nested-bullets" | "table-row" | string;
   text?: string;
+  fontSizePt?: number;
+  bold?: boolean;
+  italic?: boolean;
+  level?: number;
+  bullets?: string[];
+  groups?: Array<{ label: string; items: string[] }>;
+  cells?: Array<{ text?: string; align?: string }>;
   [key: string]: unknown;
 }
 
 export interface RenderNestedBulletList {
-  items: string[];
+  items?: string[];
+  groups: Array<{ label: string; items: string[] }>;
+  [key: string]: unknown;
 }
 
 export interface RenderNode {
@@ -599,6 +992,9 @@ export interface SectionFingerprint {
 export interface PreservationSnapshot {
   id?: string;
   timestamp?: string;
+  createdAt?: string;
+  source?: string;
+  sectionCount?: number;
   sections: SectionFingerprint[];
   entityIds: {
     experience: string[];
@@ -608,6 +1004,28 @@ export interface PreservationSnapshot {
     projects: string[];
     certifications: string[];
     dynamicSections: string[];
+    [key: string]: unknown;
+  };
+  immutable: {
+    name: string;
+    email?: string;
+    phone?: string;
+    employerNames: string[];
+    institutionNames: string[];
+    degreeNames: string[];
+    languageNames: string[];
+    experienceDates: Array<{ id: string; startDate?: string; endDate?: string }>;
+    educationDates: Array<{ id: string; startDate?: string; endDate?: string }>;
+    certificationNames: string[];
+    projectNames: string[];
+    [key: string]: unknown;
+  };
+  optimizable?: {
+    summaryLength?: number;
+    headlineLength?: number;
+    bulletCount?: number;
+    highlightCount?: number;
+    skillCategoryCount?: number;
     [key: string]: unknown;
   };
   [key: string]: unknown;

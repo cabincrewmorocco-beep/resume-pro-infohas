@@ -8,6 +8,7 @@ export interface SectionBoundary {
   startIndex: number;
   endIndex: number;
   lines: string[];
+  contentLines: string[];
 }
 
 const SECTION_PATTERNS: Record<string, RegExp> = {
@@ -50,6 +51,7 @@ export function detectSectionBoundaries(lines: string[]): SectionBoundary[] {
       startIndex: cur.index,
       endIndex: nextIndex,
       lines: secLines,
+      contentLines: secLines,
     });
   }
 

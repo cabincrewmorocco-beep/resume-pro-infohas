@@ -56,7 +56,7 @@ export function AuthModal() {
     }
     setLoading("email");
     await new Promise((r) => setTimeout(r, 400));
-    const result = signInWithEmail(email, password);
+    const result = await signInWithEmail(email, password);
     setLoading(null);
     if (!result.ok) {
       toast.error(result.error || "Sign in failed.");
@@ -87,7 +87,7 @@ export function AuthModal() {
     }
     setLoading("email");
     await new Promise((r) => setTimeout(r, 400));
-    const result = registerWithEmail(email, password, name, username);
+    const result = await registerWithEmail(email, password, name, username);
     setLoading(null);
     if (!result.ok) {
       toast.error(result.error || "Registration failed.");

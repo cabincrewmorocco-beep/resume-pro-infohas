@@ -427,6 +427,33 @@ export function cloudApiSafe<T extends (...args: any[]) => Promise<any>>(
   }) as T;
 }
 
+/**
+ * Robustly auto-syncs a resume to cloud storage (Cloudflare D1).
+ * Attempts update first, then creates if not found.
+ * Never throws unhandled rejections to prevent crashing the UI.
+ */
+export async function syncResumeToCloud(
+  resume: any
+): Promise<{ success: boolean; error?: string; timestamp: number }> {
+  const now = Date.now();
+  if (!resume || !resume.id) {
+    return { success: false, error: "Invalid resume payload", timestamp: now };
+  }
+  try {
+    await api.updateResume(resume.id, resume);
+    return { success: true, timestamp: now };
+  } catch (err: any) {
+    try {
+      await api.createResume(resume);
+      return { success: true, timestamp: now };
+    } catch (createErr: any) {
+      const errMsg = createErr?.message || err?.message || "Cloud sync unavailable";
+      console.warn("[syncResumeToCloud] Cloud auto-sync failed:", errMsg);
+      return { success: false, error: errMsg, timestamp: now };
+    }
+  }
+}
+
 // ============ SYNC HOOK ============
 // On app load, sync all data from D1 to the Zustand store
 export async function syncAllFromCloud(store: any): Promise<void> {

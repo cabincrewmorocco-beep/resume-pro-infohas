@@ -6,6 +6,7 @@ import type { ResumeData } from "./types";
 
 export interface ResumeTemplateBlueprint {
   templateId?: string;
+  layoutType?: string;
   sectionOrder: string[];
   layout?: any;
 }

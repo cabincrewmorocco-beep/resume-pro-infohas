@@ -74,10 +74,12 @@ export function compressToOnePage(
   let currentLevelIdx = 0;
   let currentLevel = COMPRESSION_LEVELS[0];
 
+  const pageSize: "A4" | "Letter" = theme.pageSize === "A4" ? "A4" : "Letter";
+
   // Try each compression level until content fits or we run out of levels
   for (let i = 0; i < COMPRESSION_LEVELS.length; i++) {
     const level = COMPRESSION_LEVELS[i];
-    const capacity = estimatePageCapacity(level, theme.pageSize);
+    const capacity = estimatePageCapacity(level, pageSize);
 
     if (totalChars <= capacity || i === COMPRESSION_LEVELS.length - 1) {
       currentLevel = level;
@@ -93,8 +95,8 @@ export function compressToOnePage(
   if (currentLevelIdx >= 4) steps.push("reduced-font-size");
 
   // Estimate final height
-  const estimatedHeight = estimateHeight(totalChars, currentLevel, theme.pageSize);
-  const { heightMm } = getPageDimensionsMm(theme.pageSize);
+  const estimatedHeight = estimateHeight(totalChars, currentLevel, pageSize);
+  const { heightMm } = getPageDimensionsMm(pageSize);
   const usableHeight = heightMm - currentLevel.marginTopMm - currentLevel.marginBottomMm;
   const fitsOnOnePage = estimatedHeight <= usableHeight;
 

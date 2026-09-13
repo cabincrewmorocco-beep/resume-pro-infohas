@@ -388,13 +388,13 @@ function renderContentItem(
 }
 
 function renderNestedBullets(
-  item: RenderNestedBulletList,
+  item: RenderContentItem | RenderNestedBulletList,
   children: Paragraph[],
   L: ResumeLayoutModel,
   bodyHex: string,
   paraAlign: (typeof AlignmentType)[keyof typeof AlignmentType] = AlignmentType.JUSTIFIED,
 ): void {
-  for (const group of item.groups) {
+  for (const group of item.groups || []) {
     children.push(new Paragraph({
       bullet: { level: 0 },
       alignment: paraAlign,

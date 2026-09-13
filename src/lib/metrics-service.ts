@@ -106,7 +106,7 @@ export function getMetricsSnapshot(): MetricsSnapshot {
       totalRepairs: telemetry.performance.totalRepairs,
       repairSuccessRate: telemetry.performance.repairSuccessRate,
       totalLearnings: learningStats.totalLearnings,
-      recurringIssues: learningStats.recurringIssues,
+      recurringIssues: learningStats.recurringIssues.length,
     },
 
     incidents: {

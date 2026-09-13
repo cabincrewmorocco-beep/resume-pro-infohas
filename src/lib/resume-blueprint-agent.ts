@@ -9,6 +9,9 @@ export interface ResumeBlueprint {
   experienceCount: number;
   educationCount: number;
   skillsCount: number;
+  experience: any[];
+  education: any[];
+  skills: any[];
 }
 
 export function extractBlueprint(resume: ResumeData): ResumeBlueprint {
@@ -22,5 +25,8 @@ export function extractBlueprint(resume: ResumeData): ResumeBlueprint {
     experienceCount: resume.experience?.length || 0,
     educationCount: resume.education?.length || 0,
     skillsCount: resume.skills?.length || 0,
+    experience: resume.experience || [],
+    education: resume.education || [],
+    skills: resume.skills || [],
   };
 }

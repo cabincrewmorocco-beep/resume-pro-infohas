@@ -220,11 +220,11 @@ export function extractSectionsFromResume(resume: ResumeData): DynamicSection[] 
   }
 
   // --- Experience ---
-  if (resume.experience?.length > 0) {
+  if (Array.isArray(resume.experience) && resume.experience.length > 0) {
     const expContent = resume.experience
       .map(
         (e) =>
-          `${e.title} at ${e.company} (${e.startDate} - ${e.endDate}): ${e.bullets.join("; ")}`
+          `${e.title || ""} at ${e.company || ""} (${e.startDate || ""} - ${e.endDate || ""}): ${(e.bullets || []).join("; ")}`
       )
       .join("\n");
     sections.push({
@@ -232,7 +232,7 @@ export function extractSectionsFromResume(resume: ResumeData): DynamicSection[] 
       title: "Experience",
       normalizedTitle: "experience",
       content: expContent,
-      bullets: resume.experience.flatMap((e) => [e.title, ...e.bullets]),
+      bullets: resume.experience.flatMap((e) => [e.title || "", ...(e.bullets || [])]),
       order: order++,
       source: "parsed",
       immutable: true,
@@ -240,11 +240,11 @@ export function extractSectionsFromResume(resume: ResumeData): DynamicSection[] 
   }
 
   // --- Education ---
-  if (resume.education?.length > 0) {
+  if (Array.isArray(resume.education) && resume.education.length > 0) {
     const eduContent = resume.education
       .map(
         (e) =>
-          `${e.degree} at ${e.institution}${e.field ? `, ${e.field}` : ""} (${e.startDate} - ${e.endDate})`
+          `${e.degree || ""} at ${e.institution || ""}${e.field ? `, ${e.field}` : ""} (${e.startDate || ""} - ${e.endDate || ""})`
       )
       .join("\n");
     sections.push({
@@ -253,7 +253,7 @@ export function extractSectionsFromResume(resume: ResumeData): DynamicSection[] 
       normalizedTitle: "education",
       content: eduContent,
       bullets: resume.education.flatMap((e) => [
-        `${e.degree} - ${e.institution}`,
+        `${e.degree || ""} - ${e.institution || ""}`,
         ...(e.highlights || []),
       ]),
       order: order++,
@@ -263,16 +263,16 @@ export function extractSectionsFromResume(resume: ResumeData): DynamicSection[] 
   }
 
   // --- Skills ---
-  if (resume.skills?.length > 0) {
+  if (Array.isArray(resume.skills) && resume.skills.length > 0) {
     const skillsContent = resume.skills
-      .map((s) => `${s.name}${s.category ? ` [${s.category}]` : ""}`)
+      .map((s) => `${s.name || ""}${s.category ? ` [${s.category}]` : ""}`)
       .join(", ");
     sections.push({
       id: computeFingerprintSync("skills", skillsContent),
       title: "Skills",
       normalizedTitle: "skills",
       content: skillsContent,
-      bullets: resume.skills.map((s) => s.name),
+      bullets: resume.skills.map((s) => s.name || ""),
       order: order++,
       source: "parsed",
       immutable: true,
@@ -280,16 +280,16 @@ export function extractSectionsFromResume(resume: ResumeData): DynamicSection[] 
   }
 
   // --- Languages ---
-  if (resume.languages?.length > 0) {
+  if (Array.isArray(resume.languages) && resume.languages.length > 0) {
     const langContent = resume.languages
-      .map((l) => `${l.name} (${l.proficiency})`)
+      .map((l) => `${l.name || ""} (${l.proficiency || ""})`)
       .join(", ");
     sections.push({
       id: computeFingerprintSync("languages", langContent),
       title: "Languages",
       normalizedTitle: "languages",
       content: langContent,
-      bullets: resume.languages.map((l) => `${l.name} - ${l.proficiency}`),
+      bullets: resume.languages.map((l) => `${l.name || ""} - ${l.proficiency || ""}`),
       order: order++,
       source: "parsed",
       immutable: true,

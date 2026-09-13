@@ -4,11 +4,19 @@
 
 import type { ResumeData, JobDescription } from "./types";
 
+export interface GuardianCheck {
+  name: string;
+  passed: boolean;
+  critical: boolean;
+  detail: string;
+}
+
 export interface GuardianVerdict {
   passed: boolean;
   score: number;
-  status: "pass" | "warn" | "fail" | string;
+  status: "pass" | "warn" | "fail" | "BLOCKED" | string;
   violations: string[];
+  checks: GuardianCheck[];
   repairsApplied?: string[];
 }
 
@@ -30,30 +38,47 @@ export function assertResumeExportable(resume: ResumeData): void {
 export async function runGuardianValidation(
   candidate: ResumeData,
   source: ResumeData,
-  jd?: JobDescription | null
-): Promise<{ verdict: GuardianVerdict; repairedResume?: ResumeData; score: number; status: string }> {
+  jd?: JobDescription | null,
+  options?: any
+): Promise<GuardianVerdict & { verdict: GuardianVerdict; repairedResume?: ResumeData }> {
   const violations: string[] = [];
+  const checks: GuardianCheck[] = [];
 
-  if (source.experience && candidate.experience) {
-    if (candidate.experience.length < source.experience.length) {
-      violations.push("One or more experience entries were dropped.");
-    }
+  const srcExpCount = source?.experience?.length ?? 0;
+  const candExpCount = candidate?.experience?.length ?? 0;
+  if (srcExpCount > 0 && candExpCount < srcExpCount) {
+    violations.push("One or more experience entries were dropped.");
+    checks.push({
+      name: "Experience Preserved",
+      passed: false,
+      critical: true,
+      detail: `One or more experience entries were dropped (${candExpCount}/${srcExpCount}).`,
+    });
+  } else {
+    checks.push({
+      name: "Experience Preserved",
+      passed: true,
+      critical: true,
+      detail: "All experience entries preserved.",
+    });
   }
 
   const passed = violations.length === 0;
   const score = passed ? 100 : Math.max(60, 100 - violations.length * 15);
   const status = passed ? "pass" : "warn";
 
-  return {
-    verdict: {
-      passed,
-      score,
-      status,
-      violations,
-      repairsApplied: [],
-    },
-    repairedResume: candidate,
+  const verdict: GuardianVerdict = {
+    passed,
     score,
     status,
+    violations,
+    checks,
+    repairsApplied: [],
+  };
+
+  return {
+    ...verdict,
+    verdict,
+    repairedResume: candidate,
   };
 }

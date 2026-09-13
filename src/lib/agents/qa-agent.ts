@@ -211,21 +211,22 @@ export async function runQA(
   }
 
   // === Programmatic STAR Validation (new — deterministic, no AI required) ===
-  const starValidation: STARValidationResult = validateSTAR(optimizedResume, originalResume);
-  if (starValidation.totalBullets > 0) {
+  const starValidation: STARValidationResult = validateSTAR(optimizedResume, originalResume ?? undefined);
+  if ((starValidation?.totalBullets ?? 0) > 0) {
+    const starErrors = starValidation.errors || [];
     checks.push({
       name: "STAR Method Validation",
-      passed: starValidation.passed,
-      score: starValidation.score,
-      details: starValidation.explanation,
-      errors: starValidation.errors.length > 0 ? starValidation.errors : undefined,
+      passed: Boolean(starValidation.passed),
+      score: starValidation.score ?? Math.round(starValidation.passRate ?? 100),
+      details: starValidation.explanation || (starValidation.passed ? "STAR compliance verified." : "STAR compliance issues detected."),
+      errors: starErrors.length > 0 ? starErrors : undefined,
     });
     if (!starValidation.passed) {
       console.warn(
-        `[QA] STAR validation FAILED — ${starValidation.totalBullets - starValidation.passingBullets}/${starValidation.totalBullets} bullet(s) failed.\n` +
-        `  - Passive/weak verbs: ${starValidation.passiveVerbCount}\n` +
-        `  - Missing metrics: ${starValidation.noMetricCount}\n` +
-        `  - Entity violations: ${starValidation.entityViolationCount}`
+        `[QA] STAR validation FAILED — ${(starValidation.totalBullets ?? 0) - (starValidation.passingBullets ?? 0)}/${starValidation.totalBullets ?? 0} bullet(s) failed.\n` +
+        `  - Passive/weak verbs: ${starValidation.passiveVerbCount ?? 0}\n` +
+        `  - Missing metrics: ${starValidation.noMetricCount ?? 0}\n` +
+        `  - Entity violations: ${starValidation.entityViolationCount ?? 0}`
       );
     }
   }
@@ -304,68 +305,80 @@ export function checkFactualConsistency(
   optimized: ResumeData
 ): FactualConsistencyResult {
   // === Build sets of original values (lowercased for fuzzy matching) ===
+  const origExp = original?.experience || [];
+  const origEdu = original?.education || [];
+  const origCerts = original?.certifications || [];
+  const origLangs = original?.languages || [];
+  const origContact = original?.contact || { email: "", phone: "", location: "" };
+
   const originalEmployers = new Set(
-    original.experience.map((e) => e.company.toLowerCase().trim()).filter(Boolean)
+    origExp.map((e) => e?.company?.toLowerCase().trim()).filter(Boolean)
   );
   const originalInstitutions = new Set(
-    original.education.map((e) => e.institution.toLowerCase().trim()).filter(Boolean)
+    origEdu.map((e) => e?.institution?.toLowerCase().trim()).filter(Boolean)
   );
   const originalDegrees = new Set(
-    original.education.map((e) => e.degree.toLowerCase().trim()).filter(Boolean)
+    origEdu.map((e) => e?.degree?.toLowerCase().trim()).filter(Boolean)
   );
   const originalCertifications = new Set(
-    original.certifications.map((c) => c.name.toLowerCase().trim()).filter(Boolean)
+    origCerts.map((c) => c?.name?.toLowerCase().trim()).filter(Boolean)
   );
   // === NEW: locked fields — locations, languages, contact info ===
   const originalLocations = new Set(
     [
-      original.contact.location?.toLowerCase().trim(),
-      ...original.experience.map((e) => e.location?.toLowerCase().trim()),
-      ...original.education.map((e) => e.location?.toLowerCase().trim()),
+      origContact.location?.toLowerCase().trim(),
+      ...origExp.map((e) => e?.location?.toLowerCase().trim()),
+      ...origEdu.map((e) => e?.location?.toLowerCase().trim()),
     ].filter(Boolean)
   );
   const originalLanguages = new Set(
-    original.languages.map((l) => l.name.toLowerCase().trim()).filter(Boolean)
+    origLangs.map((l) => l?.name?.toLowerCase().trim()).filter(Boolean)
   );
-  const originalEmail = original.contact.email?.toLowerCase().trim();
-  const originalPhone = original.contact.phone?.toLowerCase().trim();
-  const originalName = original.name?.toLowerCase().trim();
+  const originalEmail = origContact.email?.toLowerCase().trim();
+  const originalPhone = origContact.phone?.toLowerCase().trim();
+  const originalName = original?.name?.toLowerCase().trim();
 
   // Extract all numbers/metrics from original (e.g. "40M+", "23%", "$1.2M", "200+")
-  const originalText = JSON.stringify(original);
+  const originalText = JSON.stringify(original || {});
   const originalMetrics = new Set(
     (originalText.match(/\d+(?:\.\d+)?[%×xMKB+]?/g) ?? []).map((m) => m.toLowerCase())
   );
 
+  const optExp = optimized?.experience || [];
+  const optEdu = optimized?.education || [];
+  const optCerts = optimized?.certifications || [];
+  const optLangs = optimized?.languages || [];
+  const optContact = optimized?.contact || { email: "", phone: "", location: "" };
+
   // === Check optimized values against original sets ===
   const fabricatedEmployers: string[] = [];
-  for (const e of optimized.experience) {
-    const employer = e.company.toLowerCase().trim();
+  for (const e of optExp) {
+    const employer = e?.company?.toLowerCase().trim();
     if (!employer) continue;
     const found = Array.from(originalEmployers).some(
-      (orig) => orig.includes(employer) || employer.includes(orig) || levenshtein(employer, orig) <= 3
+      (orig) => orig && (orig.includes(employer) || employer.includes(orig) || levenshtein(employer, orig) <= 3)
     );
     if (!found) fabricatedEmployers.push(e.company);
   }
 
   const fabricatedEducation: string[] = [];
-  for (const ed of optimized.education) {
-    const institution = ed.institution.toLowerCase().trim();
-    const degree = ed.degree.toLowerCase().trim();
-    if (institution && !Array.from(originalInstitutions).some((o) => o.includes(institution) || institution.includes(o))) {
+  for (const ed of optEdu) {
+    const institution = ed?.institution?.toLowerCase().trim();
+    const degree = ed?.degree?.toLowerCase().trim();
+    if (institution && !Array.from(originalInstitutions).some((o) => o && (o.includes(institution) || institution.includes(o)))) {
       fabricatedEducation.push(ed.institution);
     }
-    if (degree && !Array.from(originalDegrees).some((o) => o.includes(degree) || degree.includes(o))) {
+    if (degree && !Array.from(originalDegrees).some((o) => o && (o.includes(degree) || degree.includes(o)))) {
       fabricatedEducation.push(ed.degree);
     }
   }
 
   const fabricatedCertifications: string[] = [];
-  for (const c of optimized.certifications) {
-    const name = c.name.toLowerCase().trim();
+  for (const c of optCerts) {
+    const name = c?.name?.toLowerCase().trim();
     if (!name) continue;
     const found = Array.from(originalCertifications).some(
-      (orig) => orig.includes(name) || name.includes(orig)
+      (orig) => orig && (orig.includes(name) || name.includes(orig))
     );
     if (!found) fabricatedCertifications.push(c.name);
   }
@@ -373,9 +386,9 @@ export function checkFactualConsistency(
   // === NEW: Check locations ===
   const fabricatedLocations: string[] = [];
   const optLocations = [
-    optimized.contact.location?.toLowerCase().trim(),
-    ...optimized.experience.map((e) => e.location?.toLowerCase().trim()),
-    ...optimized.education.map((e) => e.location?.toLowerCase().trim()),
+    optContact.location?.toLowerCase().trim(),
+    ...optExp.map((e) => e?.location?.toLowerCase().trim()),
+    ...optEdu.map((e) => e?.location?.toLowerCase().trim()),
   ].filter(Boolean);
   for (const loc of optLocations) {
     if (!loc) continue;
@@ -387,8 +400,8 @@ export function checkFactualConsistency(
 
   // === NEW: Check languages ===
   const fabricatedLanguages: string[] = [];
-  for (const l of optimized.languages) {
-    const name = l.name.toLowerCase().trim();
+  for (const l of optLangs) {
+    const name = l?.name?.toLowerCase().trim();
     if (!name) continue;
     if (!originalLanguages.has(name)) {
       fabricatedLanguages.push(l.name);
@@ -397,19 +410,19 @@ export function checkFactualConsistency(
 
   // === NEW: Check contact info ===
   const fabricatedContact: string[] = [];
-  if (optimized.contact.email && originalEmail && optimized.contact.email.toLowerCase().trim() !== originalEmail) {
-    fabricatedContact.push(`Email changed: ${originalEmail} → ${optimized.contact.email}`);
+  if (optContact.email && originalEmail && optContact.email.toLowerCase().trim() !== originalEmail) {
+    fabricatedContact.push(`Email changed: ${originalEmail} → ${optContact.email}`);
   }
-  if (optimized.contact.phone && originalPhone && optimized.contact.phone.toLowerCase().trim() !== originalPhone) {
-    fabricatedContact.push(`Phone changed: ${originalPhone} → ${optimized.contact.phone}`);
+  if (optContact.phone && originalPhone && optContact.phone.toLowerCase().trim() !== originalPhone) {
+    fabricatedContact.push(`Phone changed: ${originalPhone} → ${optContact.phone}`);
   }
-  if (optimized.name && originalName && optimized.name.toLowerCase().trim() !== originalName) {
+  if (optimized?.name && originalName && optimized.name.toLowerCase().trim() !== originalName) {
     fabricatedContact.push(`Name changed: ${originalName} → ${optimized.name}`);
   }
 
   // Check optimized bullets for metrics not in original
   const fabricatedMetrics: string[] = [];
-  const optimizedText = JSON.stringify(optimized);
+  const optimizedText = JSON.stringify(optimized || {});
   const optimizedMetricMatches = optimizedText.match(/\d+(?:\.\d+)?[%×xMKB+]?/g) ?? [];
   for (const metric of optimizedMetricMatches) {
     const lower = metric.toLowerCase();
@@ -490,14 +503,21 @@ export function checkProfessionalTone(resume: ResumeData): ProfessionalToneResul
   }
 
   // === Check all text fields for leak patterns ===
+  const expList = resume?.experience || [];
+  const eduList = resume?.education || [];
+  const skillList = resume?.skills || [];
+  const langList = resume?.languages || [];
+  const certList = resume?.certifications || [];
+  const projList = resume?.projects || [];
+
   const allText = [
-    resume.name, resume.headline, resume.summary,
-    ...resume.experience.flatMap((e) => [e.title, e.company, e.location, ...e.bullets]),
-    ...resume.education.flatMap((e) => [e.degree, e.institution, ...(e.highlights ?? [])]),
-    ...resume.skills.map((s) => s.name),
-    ...resume.languages.map((l) => l.name),
-    ...resume.certifications.map((c) => c.name),
-    ...resume.projects.map((p) => p.name + " " + (p.description ?? "")),
+    resume?.name, resume?.headline, resume?.summary,
+    ...expList.flatMap((e) => [e?.title, e?.company, e?.location, ...(e?.bullets || [])]),
+    ...eduList.flatMap((e) => [e?.degree, e?.institution, ...(e?.highlights ?? [])]),
+    ...skillList.map((s) => s?.name),
+    ...langList.map((l) => l?.name),
+    ...certList.map((c) => c?.name),
+    ...projList.map((p) => (p?.name || "") + " " + (p?.description ?? "")),
   ].filter(Boolean) as string[];
 
   for (const text of allText) {
@@ -511,10 +531,10 @@ export function checkProfessionalTone(resume: ResumeData): ProfessionalToneResul
   // The resume doesn't have explicit section objects, but we check the summary
   // and any text that looks like a section header
   const sectionLikeTexts = [
-    resume.summary,
-    resume.headline,
-    ...resume.experience.map((e) => e.title),
-    ...resume.education.map((e) => e.degree),
+    resume?.summary,
+    resume?.headline,
+    ...expList.map((e) => e?.title),
+    ...eduList.map((e) => e?.degree),
   ].filter(Boolean) as string[];
 
   for (const text of sectionLikeTexts) {
@@ -603,6 +623,8 @@ export async function checkExportQuality(resume: ResumeData): Promise<ExportQual
  */
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
+  if (!a) return (b || "").length;
+  if (!b) return (a || "").length;
   if (!a.length) return b.length;
   if (!b.length) return a.length;
 

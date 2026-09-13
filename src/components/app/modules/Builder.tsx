@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -392,7 +392,42 @@ export function Builder() {
   const [importing, setImporting] = useState(false);
   const [spellCheckOpen, setSpellCheckOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const { saveCount, restoreEntry, dismissRestore, triggerSave } = useAutoSave(resume);
+  const {
+    saveCount,
+    restoreEntry,
+    dismissRestore,
+    triggerSave,
+    syncStatus,
+    isDirty,
+    lastSaved,
+    lastCloudSavedAt,
+  } = useAutoSave(resume);
+
+  // Floating peace-of-mind status notification
+  const [showSavedNotification, setShowSavedNotification] = useState(false);
+  const prevCloudSavedRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (lastCloudSavedAt && prevCloudSavedRef.current !== null && lastCloudSavedAt !== prevCloudSavedRef.current) {
+      setShowSavedNotification(true);
+      const timer = setTimeout(() => setShowSavedNotification(false), 3500);
+      return () => clearTimeout(timer);
+    }
+    prevCloudSavedRef.current = lastCloudSavedAt;
+  }, [lastCloudSavedAt]);
+
+  // Keyboard shortcut Ctrl+S / Cmd+S for instant cloud save
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        triggerSave();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [triggerSave]);
+
   const { snapshot, undo, redo, jumpTo, canUndo, canRedo, undoStack, redoStack, totalUndos, totalRedos } = useUndoRedo(resume);
   const previewRef = useRef<HTMLDivElement>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -1953,28 +1988,56 @@ ${resumeContext}
                 </Badge>
               </button>
             )}
-            <Badge variant="outline" className="text-[10px] gap-1">
-              <Icon name="Save" className="w-3 h-3" /> Saved {saveCount > 0 ? `(${saveCount})` : "now"}
-            </Badge>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (resume) {
-                  updateResume(resume.id, { ...resume, updatedAt: new Date().toISOString() });
-                }
-                const ok = await triggerSave();
-                if (ok) {
-                  toast.success("Resume saved successfully!");
-                } else {
-                  toast.error("Failed to save resume.");
-                }
-              }}
-              className="h-5 px-1.5 text-[9px] gap-1 border-emerald-500/30 hover:bg-emerald-50/50 hover:text-emerald-700 text-emerald-600 bg-emerald-50/10 font-semibold flex items-center"
-              title="Save Changes Now"
-            >
-              <Icon name="Save" className="w-2.5 h-2.5" />
-              Save Now
-            </Button>
+            {/* Cloud Auto-Sync & Saved Status Badge */}
+            <div className="flex items-center gap-1.5">
+              {syncStatus === "saving" ? (
+                <div
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-600 dark:text-sky-400 text-[10px] font-medium animate-pulse"
+                  title="Auto-syncing resume data to cloud storage..."
+                >
+                  <Icon name="Loader2" className="w-3 h-3 animate-spin text-sky-500" />
+                  <span>Saving...</span>
+                </div>
+              ) : isDirty ? (
+                <div
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-[10px] font-medium"
+                  title="Changes detected — syncing to cloud shortly..."
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  <span>Saving...</span>
+                </div>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-medium shadow-2xs transition-all"
+                  title="All changes automatically saved and synchronized with cloud backup."
+                >
+                  <Icon name="CloudCheck" className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="font-semibold">Saved</span>
+                  {saveCount > 0 && (
+                    <span className="text-[9px] text-muted-foreground hidden sm:inline">
+                      ({saveCount})
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (resume) {
+                    updateResume(resume.id, { ...resume, updatedAt: new Date().toISOString() });
+                  }
+                  await triggerSave();
+                }}
+                disabled={syncStatus === "saving"}
+                className="h-6 px-2 text-[10px] gap-1 border-emerald-500/30 hover:bg-emerald-500/15 hover:text-emerald-700 dark:hover:text-emerald-300 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 font-semibold flex items-center transition-colors cursor-pointer"
+                title="Force save and auto-sync to cloud immediately (Ctrl+S)"
+              >
+                <Icon name="CloudUpload" className="w-3 h-3" />
+                <span>Save Now</span>
+              </Button>
+            </div>
             <button onClick={() => { const d = undo(); if (d) patch(d); }} disabled={!canUndo} className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-30 p-1" title="Undo (Ctrl+Z)">
               <Icon name="Undo2" className="w-3 h-3" />
             </button>
@@ -2824,6 +2887,32 @@ ${resumeContext}
         setActiveElement={setActiveElement}
         isPageOverflowing={isPageOverflowing}
       />
+
+      {/* Cloud Auto-Sync Peace-of-Mind Floating Notification */}
+      <AnimatePresence>
+        {showSavedNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-2.5 rounded-full bg-card/95 text-card-foreground border border-emerald-500/40 shadow-xl backdrop-blur-md pointer-events-none"
+          >
+            <div className="w-6 h-6 rounded-full bg-emerald-500/15 flex items-center justify-center text-emerald-500 shrink-0">
+              <Icon name="CloudCheck" className="w-4 h-4" />
+            </div>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 leading-none">
+                <span>Saved to Cloud</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              </div>
+              <span className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+                All resume edits safely synced to cloud storage
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

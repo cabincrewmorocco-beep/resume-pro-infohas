@@ -45,10 +45,26 @@ export function recordPipelineFailure(detail: Record<string, unknown> | string):
   state.performance.totalFailures++;
 }
 
-export function recordProviderFailure(provider: string, error: unknown): void {
+export function recordProviderFailure(
+  providerOrOptions: string | { providerName?: string; provider?: string; errorType?: string; errorMessage?: string; error?: unknown },
+  maybeError?: unknown
+): void {
+  let provider = "unknown";
+  let errorStr = "unknown error";
+
+  if (typeof providerOrOptions === "string") {
+    provider = providerOrOptions;
+    errorStr = String(maybeError ?? "unknown error");
+  } else if (providerOrOptions && typeof providerOrOptions === "object") {
+    provider = providerOrOptions.providerName || providerOrOptions.provider || "unknown";
+    errorStr = providerOrOptions.errorMessage
+      ? `${providerOrOptions.errorType || "error"}: ${providerOrOptions.errorMessage}`
+      : String(providerOrOptions.error ?? "unknown error");
+  }
+
   state.providerFailures.push({
     provider,
-    error: String(error),
+    error: errorStr,
     timestamp: new Date().toISOString(),
   });
   if (state.providerFailures.length > 50) {
@@ -56,7 +72,8 @@ export function recordProviderFailure(provider: string, error: unknown): void {
   }
 }
 
-export function recordRepair(success: boolean): void {
+export function recordRepair(successOrRecord: boolean | { success: boolean; [key: string]: unknown }): void {
+  const success = typeof successOrRecord === "boolean" ? successOrRecord : Boolean(successOrRecord?.success);
   state.performance.totalRepairs++;
   if (!success) {
     state.performance.repairSuccessRate =

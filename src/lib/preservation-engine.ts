@@ -514,7 +514,7 @@ export function compareSnapshots(
 
   const afterIds = new Map<string, Set<string>>();
   for (const [key, ids] of Object.entries(after.entityIds)) {
-    afterIds.set(key, new Set(ids));
+    afterIds.set(key, new Set(Array.isArray(ids) ? (ids as string[]) : []));
   }
 
   for (const source of entityIdSources) {

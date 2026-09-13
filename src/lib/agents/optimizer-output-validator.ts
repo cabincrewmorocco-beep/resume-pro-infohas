@@ -60,9 +60,12 @@ function isJunkKeyword(k: string): boolean {
 function isGuardianProtectedEntity(k: string): boolean {
   const t = k.trim().toLowerCase();
   if (!t) return true;
-  return JD_COMPANY_NAMES.some(
-    (name) => t === name || t.includes(name) || name.includes(t)
-  );
+  for (const name of JD_COMPANY_NAMES) {
+    if (t === name || t.includes(name) || name.includes(t)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeText(s: string): string {

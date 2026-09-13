@@ -75,7 +75,20 @@ export function toRenderDocument(resume: ResumeData, layout?: ResumeLayoutModel)
   return {
     id: resume.id,
     title: resume.title || "Resume",
-    layout,
+    template: (resume.template as string) || (resume.templateId as string) || "ats-professional",
+    contact: {
+      name: resume.name || resume.contact?.name || "Candidate",
+      headline: resume.headline || resume.targetRole,
+      email: resume.contact?.email,
+      phone: resume.contact?.phone,
+      location: resume.contact?.location || (resume.contact as any)?.address,
+      photoUrl: resume.photoUrl,
+      dateOfBirth: resume.dateOfBirth,
+      linkedin: resume.contact?.linkedin,
+      github: resume.contact?.github,
+      website: resume.contact?.website,
+    },
+    layout: layout || resume.layout || {},
     sections,
   };
 }

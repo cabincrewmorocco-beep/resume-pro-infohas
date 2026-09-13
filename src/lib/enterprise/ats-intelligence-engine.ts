@@ -450,15 +450,15 @@ export function simulateATSParser(
   if (!profile.structuralSensitivity.prefersColumns) {
     // If the resume has layout indications of multiple columns (e.g. side-by-side elements)
     // We simulate this risk by analyzing if skills lists are long or if contact details are side-by-side
-    if (resume.skills.length > 15) {
-      risks.push(`High Skill count (${resume.skills.length}) may suggest tabular or column formatting. ${profile.name} parser is sensitive to tables/columns.`);
+    if ((resume.skills || []).length > 15) {
+      risks.push(`High Skill count (${(resume.skills || []).length}) may suggest tabular or column formatting. ${profile.name} parser is sensitive to tables/columns.`);
       parserStability -= 10;
     }
   }
 
   // 2. Date Ambiguity
   // E.g., '2023 - Present' or 'Ongoing' or missing months
-  for (const exp of resume.experience) {
+  for (const exp of (resume.experience || [])) {
     if (!exp.startDate || !exp.endDate) {
       warnings.push(`Ambiguous dates in role "${exp.title}" at "${exp.company}". ATS parser might fail to compute employment duration.`);
       parserStability -= 8;
@@ -474,21 +474,21 @@ export function simulateATSParser(
   }
 
   // 3. Contact Info Formatting
-  if (resume.contact.phone && /[\(\)]/.test(resume.contact.phone)) {
+  if (resume.contact?.phone && /[\(\)]/.test(resume.contact.phone)) {
     warnings.push("Phone number contains parentheses (e.g., (123)). Some older ATS parsers (like Taleo EE) fail to index numbers with special characters.");
     parserStability -= 5;
   }
-  if (!resume.contact.email || !resume.contact.email.includes("@")) {
+  if (!resume.contact?.email || !resume.contact.email.includes("@")) {
     risks.push("CRITICAL: Invalid or missing email address. ATS parser will fail to create a candidate profile.");
     parserStability -= 30;
   }
 
   // 4. Special Characters Risk
   // Check bullets for problematic characters
-  const bullets = resume.experience.flatMap((e) => e.bullets);
+  const bullets = (resume.experience || []).flatMap((e) => e?.bullets || []);
   let hasSpecialChars = false;
   for (const b of bullets) {
-    if (/[•✈✓]/.test(b)) {
+    if (b && /[•✈✓]/.test(b)) {
       hasSpecialChars = true;
     }
   }
@@ -499,7 +499,7 @@ export function simulateATSParser(
 
   // 5. standard headings
   // Headings that might be too creative
-  const sectionsText = [resume.summary, resume.skills.length ? "skills" : "", resume.experience.length ? "experience" : ""].join(" ").toLowerCase();
+  const sectionsText = [resume.summary, (resume.skills || []).length ? "skills" : "", (resume.experience || []).length ? "experience" : ""].join(" ").toLowerCase();
   if (sectionsText && !sectionsText.includes("professional summary") && !sectionsText.includes("work experience") && !sectionsText.includes("experience")) {
     warnings.push("Creative section headers detected. Use standard headings (e.g., 'Work Experience') to ensure correct block classification.");
     parserStability -= 10;
@@ -546,7 +546,7 @@ export function simulateRecruiter(
     firstImpression -= 10;
     recommendations.push("Summary exceeds 90 words. Shorten it to keep the recruiter engaged during the initial scan.");
   }
-  if (resume.skills.length < 5) {
+  if ((resume.skills || []).length < 5) {
     firstImpression -= 10;
     recommendations.push("List at least 8 key skills categorized logically to showcase your core competencies.");
   }
@@ -555,7 +555,7 @@ export function simulateRecruiter(
   let careerStability = 90;
   // If there are too many short tenures (e.g. < 6 months)
   let shortTenures = 0;
-  for (const exp of resume.experience) {
+  for (const exp of (resume.experience || [])) {
     // Simple duration estimate
     if (exp.startDate && exp.endDate) {
       if (exp.endDate.toLowerCase().includes("present")) continue;
@@ -590,7 +590,7 @@ export function simulateRecruiter(
 
   // D. Achievement Quality (Action verbs + metrics)
   let achievementQuality = 80;
-  const totalBullets = resume.experience.flatMap((e) => e.bullets);
+  const totalBullets = (resume.experience || []).flatMap((e) => e?.bullets || []);
   if (totalBullets.length > 0) {
     const quantified = totalBullets.filter((b) => /\d+%|\$\d|\d+x|\d{2,}/.test(b)).length;
     const quantifiedPct = (quantified / totalBullets.length) * 100;

@@ -335,6 +335,7 @@ export async function healIssue(
   // as PENDING — it goes through the standard approval workflow (Safe Apply).
   if (patch && !generateOnly) {
     store.addAIPatch({
+      id: `p_healer_${issue.id}`,
       taskId: `t_healer_${issue.id}`,
       title: `Heal: ${issue.title}`,
       description: issue.description,
@@ -430,6 +431,10 @@ export async function healMultipleIssues(
   const failed = updatedIssuesList.filter((i) => i.status === "failed").length;
 
   const report: AIHealingReport = {
+    id: `hr_${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    issuesCount: updatedIssuesList.length,
+    resolvedCount: autoFixed,
     issuesFound: updatedIssuesList.length,
     autoFixed,
     needsReview,

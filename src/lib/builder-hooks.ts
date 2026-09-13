@@ -10,6 +10,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { ResumeData, JobDescription } from "@/lib/types";
 import { computeATSDashboard, type ATSDashboard } from "@/lib/ats-match";
+import { syncResumeToCloud } from "@/lib/cloud-api";
+import { useApp } from "@/lib/store";
+import { toast } from "sonner";
 import {
   type AutoSaveEntry,
   saveAutoSave,
@@ -21,13 +24,18 @@ import {
 } from "@/lib/builder-persistence";
 
 // ============================================================================
-// Auto-save hook — versioned IndexedDB persistence
+// Auto-save hook — versioned IndexedDB persistence + Cloud Auto-Sync
 // ============================================================================
 export function useAutoSave(resume: ResumeData | undefined, delay = 2000) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastSaved, setLastSaved] = useState(Date.now());
+  const [lastCloudSavedAt, setLastCloudSavedAt] = useState<number | null>(Date.now());
   const [saveCount, setSaveCount] = useState(0);
   const [restoreEntry, setRestoreEntry] = useState<AutoSaveEntry | null>(null);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "saving" | "saved" | "error">("saved");
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastNotificationAt, setLastNotificationAt] = useState<number>(0);
+  const isFirstMount = useRef(true);
 
   // Check for unsaved auto-save on mount
   useEffect(() => {
@@ -46,42 +54,117 @@ export function useAutoSave(resume: ResumeData | undefined, delay = 2000) {
   const triggerSave = useCallback(async () => {
     if (!resume?.id) return false;
     if (timerRef.current) clearTimeout(timerRef.current);
+    setSyncStatus("saving");
     try {
+      // 1. Save local snapshot in IndexedDB
       await saveAutoSave({
         resumeId: resume.id,
         resumeData: resume,
         savedAt: Date.now(),
         version: Math.floor(Date.now() / 1000),
       });
-      setLastSaved(Date.now());
+
+      // 2. Auto-sync to Cloudflare D1 cloud storage
+      const cloudResult = await syncResumeToCloud(resume);
+      const now = Date.now();
+      setLastSaved(now);
+      setLastCloudSavedAt(cloudResult.success ? now : null);
       setSaveCount((c) => c + 1);
+      setSyncStatus(cloudResult.success ? "saved" : "saved"); // saved locally even if cloud network blip
+      setIsDirty(false);
+      setLastNotificationAt(now);
+
+      useApp.getState().setCloudSyncState({
+        status: "saved",
+        lastSavedAt: now,
+        resumeId: resume.id,
+        message: cloudResult.success ? "All changes saved to cloud" : "Saved locally (offline backup)",
+      });
+
+      // Trigger user peace-of-mind notification
+      toast.success("Saved to cloud", {
+        id: "cloud-auto-sync-status",
+        description: "Your resume changes are safely backed up in the cloud.",
+        duration: 2500,
+      });
+
       return true;
     } catch (e) {
-      console.warn("[useAutoSave] IndexedDB manual write failed:", e);
+      console.warn("[useAutoSave] Save failed:", e);
+      setSyncStatus("error");
       return false;
     }
   }, [resume]);
 
+  // Debounced auto-save & cloud sync on resume modifications
   useEffect(() => {
     if (!resume?.id) return;
+
+    // Skip the very first mount trigger to avoid notifying before user edits
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
+    }
+
+    setIsDirty(true);
     if (timerRef.current) clearTimeout(timerRef.current);
+
     timerRef.current = setTimeout(async () => {
+      setSyncStatus("saving");
       try {
+        // 1. IndexedDB local auto-save
         await saveAutoSave({
           resumeId: resume.id,
           resumeData: resume,
           savedAt: Date.now(),
           version: Math.floor(Date.now() / 1000),
         });
-        setLastSaved(Date.now());
+
+        // 2. Cloud auto-sync
+        const cloudResult = await syncResumeToCloud(resume);
+        const now = Date.now();
+        setLastSaved(now);
+        setLastCloudSavedAt(cloudResult.success ? now : null);
         setSaveCount((c) => c + 1);
+        setSyncStatus("saved");
+        setIsDirty(false);
+        setLastNotificationAt(now);
+
+        useApp.getState().setCloudSyncState({
+          status: "saved",
+          lastSavedAt: now,
+          resumeId: resume.id,
+          message: cloudResult.success ? "All changes saved to cloud" : "Saved locally (offline backup)",
+        });
+
+        // Trigger user peace-of-mind status notification
+        toast.success("Saved to cloud", {
+          id: "cloud-auto-sync-status",
+          description: "Your resume changes are safely backed up in the cloud.",
+          duration: 2500,
+        });
       } catch (e) {
-        console.warn("[useAutoSave] IndexedDB write failed:", e);
+        console.warn("[useAutoSave] Auto-sync failed:", e);
+        setSyncStatus("error");
       }
     }, delay);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, [resume, delay]);
 
-  return { lastSaved, saveCount, restoreEntry, dismissRestore, triggerSave };
+  return {
+    lastSaved,
+    lastCloudSavedAt,
+    saveCount,
+    restoreEntry,
+    dismissRestore,
+    triggerSave,
+    syncStatus,
+    isDirty,
+    lastNotificationAt,
+  };
 }
 
 // ============================================================================

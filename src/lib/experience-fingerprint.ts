@@ -172,7 +172,7 @@ export function computeExperienceFingerprint(exp: {
  */
 export function buildExperienceFingerprintMap(resume: ResumeData): Map<string, ResumeExperience> {
   const map = new Map<string, ResumeExperience>();
-  for (const exp of resume.experience) {
+  for (const exp of (resume?.experience || [])) {
     const fp = computeExperienceFingerprint(exp);
     map.set(fp, exp);
   }
@@ -188,8 +188,8 @@ export function buildExperienceFingerprintMap(resume: ResumeData): Map<string, R
  */
 export function buildExperienceIdMap(resume: ResumeData): Map<string, ResumeExperience> {
   const map = new Map<string, ResumeExperience>();
-  for (const exp of resume.experience) {
-    if (exp.id) {
+  for (const exp of (resume?.experience || [])) {
+    if (exp && exp.id) {
       map.set(exp.id, exp);
     }
   }
@@ -251,8 +251,9 @@ export function validateExperienceFingerprints(
   const sourceIdMap = buildExperienceIdMap(source);
   const sourceFpMap = buildExperienceFingerprintMap(source);
 
-  for (let i = 0; i < optimized.experience.length; i++) {
-    const opt = optimized.experience[i];
+  const optExperiences = optimized?.experience || [];
+  for (let i = 0; i < optExperiences.length; i++) {
+    const opt = optExperiences[i];
     if (!opt.id) {
       violations.push(`Experience[${i}] is missing an ID.`);
       continue;

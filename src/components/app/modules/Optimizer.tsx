@@ -26,7 +26,15 @@ import { AIRLINE_ATS_PROFILES, AIRLINE_OPTIONS, DEFAULT_APP_SETTINGS, type AppSe
 import { INDUSTRY_PROFILES, INDUSTRY_OPTIONS, type IndustryAtsProfile, detectATSFromCompany, type AtsDetails } from "@/lib/industry-ats";
 import { mapToIndustryMode } from "@/lib/industry-mapper";
 import { runOptimizationPipeline, type PipelineResult as AgentPipelineResult, type PipelineProgress } from "@/lib/agents";
-import { buildCheckpointFromResult, isCheckpointUsable, type PipelineCheckpoint } from "@/lib/agents/pipeline-checkpoint";
+import {
+  buildCheckpointFromResult,
+  isCheckpointUsable,
+  saveCheckpointToSession,
+  loadCheckpointFromSession,
+  clearCheckpointFromSession,
+  type PipelineCheckpoint,
+} from "@/lib/agents/pipeline-checkpoint";
+import { getStageDisplayName } from "@/lib/agents/pipeline-retry-wrapper";
 import { clearAllProviderCooldowns } from "@/lib/ai";
 import { PipelineProgressView } from "@/components/optimizer/PipelineProgressView";
 import { PipelineResults } from "@/components/optimizer/PipelineResults";
@@ -1010,8 +1018,13 @@ Guidelines:
   // If it doesn't, the result is from an older run and is discarded.
   const pipelineVersionRef = useRef(0);
 
-  const runPipeline = useCallback(async () => {
+  const runPipeline = useCallback(async (options?: { resumeFromStage?: string | number; clearCheckpoint?: boolean }) => {
     if (!resume || !jdParsed || !beforeReport) return;
+
+    if (options?.clearCheckpoint) {
+      clearCheckpointFromSession();
+      setPipelineCheckpoint(null);
+    }
 
     // Cancel any in-flight pipeline (shouldn't happen, but defensive)
     if (abortRef.current) abortRef.current.abort();
@@ -1101,13 +1114,31 @@ Guidelines:
       // Interview, CareerCoach) in parallel after optimization completes.
       // The Supervisor also caches results + manages the shared context. ===
       const { handleOptimizationRequested } = await import("@/lib/agents/supervisor");
-      // S4 — pass a usable checkpoint (same JD, < 24h old) once, then clear:
-      // if this run also ends recoverable, the handler captures a fresh one.
-      const checkpointToPass = isCheckpointUsable(pipelineCheckpoint, jdParsed) ? pipelineCheckpoint : undefined;
-      if (pipelineCheckpoint) setPipelineCheckpoint(null);
-      if (checkpointToPass) {
-        setAiLog((l) => [...l, "↻ Checkpoint resume — previously completed analyses (Job/Company Intelligence, Skill Gap) will be restored, only the failed optimizer re-runs."]);
+      
+      const targetStage = options?.resumeFromStage;
+      let checkpointToPass = isCheckpointUsable(pipelineCheckpoint, jdParsed) ? pipelineCheckpoint : undefined;
+      // If granular resume was requested but React state was lost, fall back to session storage
+      if (!checkpointToPass && targetStage !== undefined) {
+        const sessionCp = loadCheckpointFromSession(jdParsed);
+        if (sessionCp) {
+          checkpointToPass = sessionCp;
+          setPipelineCheckpoint(sessionCp);
+        }
       }
+
+      if (targetStage !== undefined) {
+        const stageName = getStageDisplayName(targetStage);
+        setAiLog((l) => [
+          ...l,
+          `↻ Granular Resume: Resuming pipeline from stage "${stageName}" using preserved checkpoint (completed prior stages will be restored without re-computation).`,
+        ]);
+      } else if (checkpointToPass) {
+        setAiLog((l) => [
+          ...l,
+          "↻ Checkpoint resume — previously completed analyses (Job/Company Intelligence, Skill Gap) will be restored, only the failed optimizer re-runs.",
+        ]);
+      }
+
       const result = await handleOptimizationRequested({
         resume,
         jd: jdParsed,
@@ -1118,6 +1149,7 @@ Guidelines:
         enableReflection: true,
         deepAgenticMode,
         checkpoint: checkpointToPass ?? undefined,
+        resumeFromStage: targetStage,
         onProgress: (progress) => {
           if (controller.signal.aborted) return;
           setPipelineProgress(progress);
@@ -1180,10 +1212,28 @@ Guidelines:
       if (result.status === "failed" || !result.optimizedResume) {
         const failedStepsFatal = result.steps.filter((s) => s.status === "failed");
         const fatalStep = failedStepsFatal.find((s) => s.error) || failedStepsFatal[0];
-        const errMsg = fatalStep?.error || fatalStep?.log || "Optimization pipeline failed. Please try again.";
+        const errMsg = fatalStep?.error || fatalStep?.log || result.error || "Optimization pipeline failed. Please try again.";
         setPipelineError(errMsg);
         setAiLog((l) => [...l, `✗ Pipeline failed: ${errMsg}`]);
         setAiThinking(false);
+
+        // State preservation: ensure checkpoint is captured and persisted for granular resume
+        const preservedCheckpoint = (result.checkpoint && isCheckpointUsable(result.checkpoint, jdParsed))
+          ? result.checkpoint
+          : buildCheckpointFromResult(result, jdParsed, {
+              lastFailedStage: result.failedStage,
+              lastFailedStageIndex: result.failedStageIndex,
+            });
+
+        if (preservedCheckpoint) {
+          setPipelineCheckpoint(preservedCheckpoint);
+          saveCheckpointToSession(preservedCheckpoint);
+          setAiLog((l) => [
+            ...l,
+            `💾 State Preserved: Checkpoint saved for stage "${result.failedStage || 'unknown'}" (index ${result.failedStageIndex ?? '?'}). Granular resume ready.`,
+          ]);
+        }
+
         // Stay on the optimize step so the user can retry
         toast.error(`Optimization failed: ${errMsg.slice(0, 120)}`);
         OptimizationSession.getInstance().completeRound({
@@ -1205,8 +1255,16 @@ Guidelines:
         const cov = result.keywordCoverage;
         // S4 — capture the completed intelligence artifacts so the retry
         // RESUMES (skips Job/Company Intelligence + Skill Gap AI calls).
-        const cp = buildCheckpointFromResult(result, jdParsed);
-        if (cp) setPipelineCheckpoint(cp);
+        const cp = (result.checkpoint && isCheckpointUsable(result.checkpoint, jdParsed))
+          ? result.checkpoint
+          : buildCheckpointFromResult(result, jdParsed, {
+              lastFailedStage: result.failedStage,
+              lastFailedStageIndex: result.failedStageIndex,
+            });
+        if (cp) {
+          setPipelineCheckpoint(cp);
+          saveCheckpointToSession(cp);
+        }
         setPipelineError(
           "Optimization INCOMPLETE (recoverable): every validated AI attempt failed after retries, auto-heal and fallbacks. " +
           "Your completed analyses and snapshots are preserved and the original resume was NOT substituted as a result. " +
@@ -1278,6 +1336,8 @@ Guidelines:
 
       setAiThinking(false);
       setStep("done");
+      clearCheckpointFromSession();
+      setPipelineCheckpoint(null);
 
       // Job finished — release the AI configuration lock (directives #30).
       import("@/lib/ai/readiness/config-lock").then(({ clearJobAILock }) => clearJobAILock()).catch(() => {});
@@ -2139,15 +2199,16 @@ Guidelines:
                   </div>
                 )}
 
-                {/* === 5-agent pipeline progress tracker (shows during run + on error) === */}
-                {(aiThinking || pipelineError) && (
+                {/* === Agent pipeline progress tracker (shows during run + on error / failure) === */}
+                {(aiThinking || pipelineError || pipelineResult?.status === "failed") && (
                   <div className="mt-4">
                     <PipelineProgressView
                       progress={pipelineProgress}
                       isRunning={aiThinking}
                       result={pipelineResult}
                       error={pipelineError}
-                      onRetry={optimize}
+                      onRetry={() => runPipeline({ clearCheckpoint: true })}
+                      onResumeFromStage={(stage) => runPipeline({ resumeFromStage: stage })}
                     />
                   </div>
                 )}

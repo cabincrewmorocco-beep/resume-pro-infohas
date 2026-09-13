@@ -20,14 +20,15 @@ export class OpenAICompatibleProvider implements AIProviderAdapter {
       // go through /api/providers/chat, which injects its own session header.
       ...zenSessionHeaders(baseUrl),
     };
-    if (config.apiKey) {
+    const apiKey = config.apiKey || (typeof process !== "undefined" ? process.env?.GEMINI_API_KEY : undefined);
+    if (apiKey) {
       if (config.authType === "query") {
         // appended below
       } else if (config.authType === "header" && this.type === "claude") {
-        headers["x-api-key"] = config.apiKey;
+        headers["x-api-key"] = apiKey;
         headers["anthropic-version"] = headers["anthropic-version"] || "2023-06-01";
       } else {
-        headers["Authorization"] = `Bearer ${config.apiKey}`;
+        headers["Authorization"] = `Bearer ${apiKey}`;
       }
     }
 

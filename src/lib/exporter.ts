@@ -265,31 +265,32 @@ function applyUserLayoutOverrides(L: ResumeLayoutModel): ResumeLayoutModel {
   }
   if (!config) return L;
   const S = SEED_OPTIMIZER_DIRECTIVE;
-  const userOr = <T,>(v: T | undefined, seed: T, fallback: T): T =>
-    v !== undefined && v !== seed ? v : fallback;
+  const userOr = <T,>(v: any, seed: T, fallback: T): T =>
+    v !== undefined && v !== seed && v !== null ? (v as T) : fallback;
 
-  const out = { ...L };
-  out.fontFamily = userOr(config.fontFamily, S.fontFamily, L.fontFamily);
-  out.nameSizePt = userOr(config.nameSizePt, S.nameSizePt, L.nameSizePt);
-  out.sectionTitleSizePt = userOr(config.sectionTitleSizePt, S.sectionTitleSizePt, L.sectionTitleSizePt);
-  out.bodyFontSizePt = userOr(config.bodyFontSizePt, S.bodyFontSizePt, L.bodyFontSizePt);
-  out.nameColor = userOr(config.nameColor, S.nameColor, L.nameColor);
-  out.sectionTitleColor = userOr(config.sectionTitleColor, S.sectionTitleColor, L.sectionTitleColor);
-  out.bodyTextColor = userOr(config.bodyTextColor, S.bodyTextColor, L.bodyTextColor);
+  const out: ResumeLayoutModel = { ...L };
+  out.fontFamily = userOr<string>(config.fontFamily, S.fontFamily, String(L.fontFamily || S.fontFamily));
+  out.nameSizePt = userOr<number>(config.nameSizePt, S.nameSizePt, Number(L.nameSizePt ?? S.nameSizePt));
+  out.sectionTitleSizePt = userOr<number>(config.sectionTitleSizePt, S.sectionTitleSizePt, Number(L.sectionTitleSizePt ?? S.sectionTitleSizePt));
+  out.bodyFontSizePt = userOr<number>(config.bodyFontSizePt, S.bodyFontSizePt, Number(L.bodyFontSizePt ?? S.bodyFontSizePt));
+  out.nameColor = userOr<string>(config.nameColor, S.nameColor, String(L.nameColor || S.nameColor));
+  out.sectionTitleColor = userOr<string>(config.sectionTitleColor, S.sectionTitleColor, String(L.sectionTitleColor || S.sectionTitleColor));
+  out.bodyTextColor = userOr<string>(config.bodyTextColor, S.bodyTextColor, String(L.bodyTextColor || S.bodyTextColor));
   // Contact follows body text only when the user customized the body color.
   if (config.bodyTextColor !== undefined && config.bodyTextColor !== S.bodyTextColor) {
     out.contactColor = config.bodyTextColor;
   }
-  out.marginTopMm = userOr(config.marginTopMm, S.marginTopMm, L.marginTopMm);
-  out.marginLeftMm = userOr(config.marginLeftMm, S.marginLeftMm, L.marginLeftMm);
-  out.marginRightMm = userOr(config.marginRightMm, S.marginRightMm, L.marginRightMm);
-  out.sectionGapMm = userOr(config.sectionGapMm, S.sectionGapMm, L.sectionGapMm);
+  out.marginTopMm = userOr<number>(config.marginTopMm, S.marginTopMm, Number(L.marginTopMm ?? S.marginTopMm));
+  out.marginLeftMm = userOr<number>(config.marginLeftMm, S.marginLeftMm, Number(L.marginLeftMm ?? S.marginLeftMm));
+  out.marginRightMm = userOr<number>(config.marginRightMm, S.marginRightMm, Number(L.marginRightMm ?? S.marginRightMm));
+  out.sectionGapMm = userOr<number>(config.sectionGapMm, S.sectionGapMm, Number(L.sectionGapMm ?? S.sectionGapMm));
   // Recompute line height from the winning size × winning factor so a
   // user-enlarged font doesn't inherit a cramped template line box.
-  const templateFactor =
-    L.bodyFontSizePt > 0 ? L.lineHeightMm / (L.bodyFontSizePt * 0.352778) : S.lineHeight;
-  const factor = userOr(config.lineHeight, S.lineHeight, templateFactor);
-  out.lineHeightMm = out.bodyFontSizePt * 0.352778 * factor;
+  const bodyPt = out.bodyFontSizePt || S.bodyFontSizePt || 10;
+  const lineMm = L.lineHeightMm ?? (bodyPt * 0.352778 * 1.3);
+  const templateFactor = bodyPt > 0 ? lineMm / (bodyPt * 0.352778) : S.lineHeight;
+  const factor = Number(userOr(config.lineHeight, S.lineHeight, templateFactor)) || 1.3;
+  out.lineHeightMm = bodyPt * 0.352778 * factor;
   // Alignment: templates never define it — always honor the directive.
   const align = config.bodyAlignment as TextAlignment | undefined;
   if (align === "left" || align === "center" || align === "justify") {
@@ -1412,15 +1413,15 @@ export function validateExportCompleteness(
   source: ResumeData | null,
   optimized: ResumeData,
   bypassQualityGates = false
-): { ok: true } | { ok: false; errors: string[] } {
+): { ok: boolean; errors: string[] } {
   if (bypassQualityGates) {
-    return { ok: true };
+    return { ok: true, errors: [] };
   }
   const errors: string[] = [];
 
   if (!source) {
     // No source to compare against — allow export (no data-loss comparison is possible)
-    return { ok: true };
+    return { ok: true, errors: [] };
   }
 
   // ── Section-type presence comparison ────────────────────────────────
@@ -1523,7 +1524,7 @@ export function validateExportCompleteness(
     }
   }
 
-  return errors.length > 0 ? { ok: false, errors } : { ok: true };
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, errors: [] };
 }
 
 // ---------- DOCX ----------

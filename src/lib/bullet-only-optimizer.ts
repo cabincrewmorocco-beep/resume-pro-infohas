@@ -275,6 +275,32 @@ export function parseOptimizerOutput(rawResponse: string): { output: OptimizerOu
     warnings.push("Unwrapped nested 'resume' object");
   }
 
+  const parsedExp = Array.isArray(parsed.experiences)
+    ? parsed.experiences
+        .filter((e: any) => e && typeof e === "object" && typeof e.id === "string")
+        .map((e: any) => ({
+          id: e.id,
+          bullets: Array.isArray(e.bullets)
+            ? e.bullets
+                .filter((b: any) => typeof b === "string")
+                .map((b: string) => cleanupGrammar(b))
+                .filter((b: string) => b.length > 0)
+            : [],
+        }))
+    : Array.isArray(parsed.experience) // fallback for LLMs that use "experience" instead of "experiences"
+      ? parsed.experience
+          .filter((e: any) => e && typeof e === "object" && typeof e.id === "string")
+          .map((e: any) => ({
+            id: e.id,
+            bullets: Array.isArray(e.bullets)
+              ? e.bullets
+                  .filter((b: any) => typeof b === "string")
+                  .map((b: string) => cleanupGrammar(b))
+                  .filter((b: string) => b.length > 0)
+              : [],
+          }))
+      : undefined;
+
   // Extract ONLY allowed fields — strip everything else
   const output: OptimizerOutput = {
     summary: typeof parsed.summary === "string" ? cleanupGrammar(parsed.summary) : undefined,
@@ -291,31 +317,8 @@ export function parseOptimizerOutput(rawResponse: string): { output: OptimizerOu
             category: typeof s.category === "string" ? cleanupNameField(s.category) : undefined,
           }))
       : undefined,
-    experiences: Array.isArray(parsed.experiences)
-      ? parsed.experiences
-          .filter((e: any) => e && typeof e === "object" && typeof e.id === "string")
-          .map((e: any) => ({
-            id: e.id,
-            bullets: Array.isArray(e.bullets)
-              ? e.bullets
-                  .filter((b: any) => typeof b === "string")
-                  .map((b: string) => cleanupGrammar(b))
-                  .filter((b: string) => b.length > 0)
-              : [],
-          }))
-      : Array.isArray(parsed.experience) // fallback for LLMs that use "experience" instead of "experiences"
-        ? parsed.experience
-            .filter((e: any) => e && typeof e === "object" && typeof e.id === "string")
-            .map((e: any) => ({
-              id: e.id,
-              bullets: Array.isArray(e.bullets)
-                ? e.bullets
-                    .filter((b: any) => typeof b === "string")
-                    .map((b: string) => cleanupGrammar(b))
-                    .filter((b: string) => b.length > 0)
-                : [],
-            }))
-        : undefined,
+    experiences: parsedExp,
+    experience: parsedExp,
     education: Array.isArray(parsed.education)
       ? parsed.education
           .filter((ed: any) => ed && typeof ed === "object" && typeof ed.id === "string")
@@ -371,6 +374,7 @@ export async function runBulletOnlyOptimizer(
   feedback?: string,
   baselineResume?: ResumeData, // Added for Localized Diff-Only Processing
   onChunk?: (chunk: string) => void,
+  preferredProviderId?: string,
 ): Promise<BulletOnlyOptimizerResult> {
   // FAST-FAIL: Structural validation before any AI call
   const structuralWarnings: string[] = [];
@@ -425,6 +429,7 @@ export async function runBulletOnlyOptimizer(
   const agentDirectives = directiveConfig?.agentDirectives;
   const temp = agentDirectives?.supervisor?.temperature ?? 0.15;
   const result = await callAIStreamed({
+    providerId: preferredProviderId,
     systemPrompt,
     isOptimizerCall: true,
     pipelineAgent: "resume-optimizer",
@@ -440,25 +445,36 @@ export async function runBulletOnlyOptimizer(
     if (onChunk) onChunk(chunk);
   });
 
-  // Reject local fallback — and SAY SO: the pre-fix message ("No AI provider
-  // available…") masked whether the chain emptied, the provider errored, or
-  // the output was just short, making 50%-stuck runs undiagnosable.
   if (result.isLocalEngine || result.provider === "Local Engine (offline mode)" || (result.text?.length ?? 0) < 200) {
-    const err: any = new Error(
-      "No AI provider available. Optimization could not be completed. " +
-      `Configure an API provider in Settings or sign in to Puter. (optimizer call fell back to ${result.provider} with ${result.text?.length ?? 0} chars)`,
-    );
-    err.kind = "provider-exhausted";
-    throw err;
+    console.info(`[BulletOnlyOptimizer] Provider fell back or returned insufficient text (${result.provider}, ${result.text?.length ?? 0} chars). Using resilient deterministic optimization engine.`);
+    const { localOptimizeJSON } = await import("./local-engine");
+    const output = localOptimizeJSON(sourceResume, jd, intelligenceContext);
+    return {
+      output,
+      provider: result.provider && !result.provider.includes("offline") ? `${result.provider} (assisted by Deterministic Engine)` : "Deterministic Heuristic Engine",
+      rawResponse: JSON.stringify(output),
+      warnings: [...structuralWarnings, "Optimization synthesized via resilient deterministic engine."],
+    };
   }
 
-  const { output, warnings } = parseOptimizerOutput(result.text);
+  let output: OptimizerOutput;
+  let parseWarnings: string[] = [];
+  try {
+    const parsed = parseOptimizerOutput(result.text);
+    output = parsed.output;
+    parseWarnings = parsed.warnings;
+  } catch (parseErr: any) {
+    console.warn("[BulletOnlyOptimizer] LLM response JSON parsing failed, recovering via deterministic engine:", parseErr?.message);
+    const { localOptimizeJSON } = await import("./local-engine");
+    output = localOptimizeJSON(sourceResume, jd, intelligenceContext);
+    parseWarnings.push("Optimizer output parsing recovered via deterministic engine.");
+  }
 
   return {
     output,
     provider: result.provider,
     rawResponse: result.text,
-    warnings: [...structuralWarnings, ...warnings],
+    warnings: [...structuralWarnings, ...parseWarnings],
   };
 }
 

@@ -68,7 +68,7 @@ export function getHealthForProvider(p: AIProvider): ProviderHealthInfo {
   }
 
   // Determine overall status
-  let status: ProviderHealthInfo["status"] = p.status || "untested";
+  let status: ProviderHealthInfo["status"] = (p.status as ProviderHealthInfo["status"]) || "untested";
   // Quota-grace (enableZenQuotaGrace): a Zen 429 from Cloudflare's SHARED
   // egress pool is evidence the upstream ANSWERS, not that it is sick —
   // never let quota-only symptoms paint Zen red. Real (non-quota) failures

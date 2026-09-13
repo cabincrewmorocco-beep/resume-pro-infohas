@@ -193,6 +193,8 @@ export function scoreATS(resumeRaw: ResumeData, jd?: JobDescription): ATSReport 
   return {
     id: uid("ats"),
     resumeId: resume.id,
+    overallScore: ats,
+    score: ats,
     scores: { ats, formatting, keywords, content, grammar, completeness },
     recommendations,
     missingKeywords,

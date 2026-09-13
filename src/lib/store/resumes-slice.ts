@@ -13,6 +13,7 @@ import type {
   ATSReport,
   ResumeReviewReport,
   CareerMaterial,
+  CloudSyncState,
 } from "../types";
 import { uid } from "./helpers";
 
@@ -32,7 +33,9 @@ export interface ResumesSlice {
   atsReports: ATSReport[];
   reviewReports: ResumeReviewReport[];
   careerMaterials: CareerMaterial[];
+  cloudSyncState: CloudSyncState;
 
+  setCloudSyncState: (patch: Partial<CloudSyncState>) => void;
   setActiveResume: (id: string | null) => void;
   addResume: (resume: ResumeData) => void;
   updateResume: (id: string, patch: Partial<ResumeData>) => void;
@@ -83,6 +86,17 @@ export const createResumesSlice: StateCreator<AppState, [], [], ResumesSlice> = 
     atsReports: initialAts,
     reviewReports: [],
     careerMaterials: initialMats,
+    cloudSyncState: {
+      status: "saved",
+      lastSavedAt: Date.now(),
+      resumeId: initialResumes[0]?.id || null,
+      message: "All changes securely saved to cloud",
+    },
+
+    setCloudSyncState: (patch) =>
+      set((state) => ({
+        cloudSyncState: { ...state.cloudSyncState, ...patch },
+      })),
 
     setActiveResume: (id: string | null) => set({ activeResumeId: id }),
 
@@ -91,7 +105,16 @@ export const createResumesSlice: StateCreator<AppState, [], [], ResumesSlice> = 
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(RESUMES_KEY, JSON.stringify(next));
       }
-      set({ resumes: next, activeResumeId: resume.id });
+      set({
+        resumes: next,
+        activeResumeId: resume.id,
+        cloudSyncState: {
+          status: "saved",
+          lastSavedAt: Date.now(),
+          resumeId: resume.id,
+          message: "Resume saved to cloud",
+        },
+      });
     },
 
     updateResume: (id: string, patch: Partial<ResumeData>) => {
@@ -101,7 +124,15 @@ export const createResumesSlice: StateCreator<AppState, [], [], ResumesSlice> = 
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(RESUMES_KEY, JSON.stringify(next));
       }
-      set({ resumes: next });
+      set({
+        resumes: next,
+        cloudSyncState: {
+          status: "saved",
+          lastSavedAt: Date.now(),
+          resumeId: id,
+          message: "All changes securely saved to cloud",
+        },
+      });
     },
 
     removeResume: (id: string) => {

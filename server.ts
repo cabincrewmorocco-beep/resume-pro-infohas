@@ -401,7 +401,10 @@ async function startServer() {
         try {
           const { GoogleGenAI } = await import("@google/genai");
           const ai = new GoogleGenAI({ apiKey: effectiveKey });
-          const selectedModel = model || "gemini-2.5-flash";
+          const baseModel = model || "gemini-2.5-flash";
+          const candidateModels = Array.from(
+            new Set([baseModel, "gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"].filter(Boolean))
+          ) as string[];
 
           const sysMsg = (messages || []).find((m: any) => m.role === "system");
           const contents = (messages || [])
@@ -421,13 +424,40 @@ async function startServer() {
           if (maxTokens !== undefined) genConfig.maxOutputTokens = maxTokens;
           if (sysMsg?.content) genConfig.systemInstruction = sysMsg.content;
 
-          const result = await ai.models.generateContent({
-            model: selectedModel,
-            contents,
-            config: genConfig,
-          });
+          let result: any = null;
+          let activeModel = baseModel;
+          let lastErr: any = null;
 
-          const replyText = result.text || "";
+          for (const m of candidateModels) {
+            try {
+              activeModel = m;
+              result = await ai.models.generateContent({
+                model: m,
+                contents,
+                config: genConfig,
+              });
+              if (result && typeof result.text !== "undefined") {
+                break;
+              }
+            } catch (err: any) {
+              lastErr = err;
+              const isQuota =
+                err?.status === 429 ||
+                (typeof err?.message === "string" && (err.message.includes("quota") || err.message.includes("429") || err.message.includes("RESOURCE_EXHAUSTED"))) ||
+                err?.status === "RESOURCE_EXHAUSTED";
+              if (isQuota) {
+                console.warn(`[server.ts] Gemini model ${m} quota exceeded / rate limited, trying next candidate...`);
+                continue;
+              }
+              throw err;
+            }
+          }
+
+          if (!result && lastErr) {
+            throw lastErr;
+          }
+
+          const replyText = result?.text || "";
           return res.json({
             ok: true,
             text: replyText,
@@ -435,7 +465,7 @@ async function startServer() {
               id: crypto.randomUUID(),
               object: "chat.completion",
               created: Math.floor(Date.now() / 1000),
-              model: selectedModel,
+              model: activeModel,
               choices: [{
                 index: 0,
                 message: {
@@ -452,6 +482,7 @@ async function startServer() {
             },
           });
         } catch (geminiErr: any) {
+          console.error("[server.ts] Gemini error details:", geminiErr);
           const isQuota =
             geminiErr?.status === 429 ||
             (typeof geminiErr?.message === "string" && (geminiErr.message.includes("quota") || geminiErr.message.includes("429"))) ||

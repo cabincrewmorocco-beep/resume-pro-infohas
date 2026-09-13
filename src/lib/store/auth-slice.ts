@@ -28,10 +28,10 @@ export interface AuthSlice {
   openAuth: () => void;
   closeAuth: () => void;
   signIn: (user: User) => void;
-  signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
-  signInWithPuter: () => Promise<{ success: boolean; error?: string }>;
+  signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
+  signInWithPuter: () => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
   signOut: () => void;
-  registerWithEmail: (name: string, email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  registerWithEmail: (nameOrEmail: string, emailOrPass: string, passOrName: string, maybeUsername?: string) => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
   changePassword: (oldPass: string, newPass: string) => Promise<{ success: boolean; error?: string }>;
   updateUserEmail: (newEmail: string) => Promise<{ success: boolean; error?: string }>;
   updateUserName: (newName: string) => Promise<{ success: boolean; error?: string }>;
@@ -124,26 +124,26 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
             createdAt: new Date().toISOString(),
           };
           get().signIn(adminUser);
-          return { success: true };
+          return { success: true, ok: true, user: adminUser };
         }
       }
 
       const match = users.find((u) => u.email.toLowerCase() === normalized);
       if (!match) {
-        return { success: false, error: "Invalid email or password." };
+        return { success: false, ok: false, error: "Invalid email or password." };
       }
 
       const allowed = canSignIn(match);
       if (!allowed.allowed) {
-        return { success: false, error: allowed.reason || "Account access denied." };
+        return { success: false, ok: false, error: allowed.reason || "Account access denied." };
       }
 
       if (match.passwordHash && !verifyPassword(pass, match.passwordHash)) {
-        return { success: false, error: "Invalid email or password." };
+        return { success: false, ok: false, error: "Invalid email or password." };
       }
 
       get().signIn(match);
-      return { success: true };
+      return { success: true, ok: true, user: match };
     },
 
     signInWithPuter: async () => {
@@ -160,7 +160,7 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
               createdAt: new Date().toISOString(),
             };
             get().signIn(user);
-            return { success: true };
+            return { success: true, ok: true, user };
           }
         }
         // Fallback demo user
@@ -173,9 +173,9 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
           createdAt: new Date().toISOString(),
         };
         get().signIn(guestUser);
-        return { success: true };
+        return { success: true, ok: true, user: guestUser };
       } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : "Puter auth failed" };
+        return { success: false, ok: false, error: err instanceof Error ? err.message : "Puter auth failed" };
       }
     },
 
@@ -186,17 +186,30 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
       set({ user: null, isAuthed: false, authOpen: false });
     },
 
-    registerWithEmail: async (name: string, email: string, pass: string) => {
+    registerWithEmail: async (arg1: string, arg2: string, arg3: string, maybeUsername?: string) => {
+      // Flexibly detect argument order: (name, email, pass) vs (email, pass, name, username)
+      let name = arg1;
+      let email = arg2;
+      let pass = arg3;
+      let username = maybeUsername;
+
+      if (arg1.includes("@")) {
+        email = arg1;
+        pass = arg2;
+        name = arg3;
+      }
+
       const users = [...get().users];
       const normalized = email.trim().toLowerCase();
       if (users.some((u) => u.email.toLowerCase() === normalized)) {
-        return { success: false, error: "An account with this email already exists." };
+        return { success: false, ok: false, error: "An account with this email already exists." };
       }
 
       const newUser: User = {
         id: `u_${uid()}`,
         name: name.trim() || "User",
         email: normalized,
+        username: username?.trim() || undefined,
         role: "user",
         status: "approved",
         passwordHash: hashPassword(pass),
@@ -209,7 +222,7 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
       }
       set({ users });
       get().signIn(newUser);
-      return { success: true };
+      return { success: true, ok: true, user: newUser };
     },
 
     changePassword: async (oldPass: string, newPass: string) => {

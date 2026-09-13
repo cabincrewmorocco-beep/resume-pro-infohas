@@ -219,7 +219,7 @@ export async function parseJobUrl(
     if (!fetchResult.ok) {
       return {
         ok: false,
-        error: fetchResult.error,
+        error: "error" in fetchResult ? fetchResult.error : "Failed to fetch HTML",
         metadata,
       };
     }
