@@ -2207,6 +2207,7 @@ Guidelines:
                       isRunning={aiThinking}
                       result={pipelineResult}
                       error={pipelineError}
+                      logs={aiLog}
                       onRetry={() => runPipeline({ clearCheckpoint: true })}
                       onResumeFromStage={(stage) => runPipeline({ resumeFromStage: stage })}
                     />

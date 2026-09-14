@@ -36,7 +36,7 @@ function headlineIsDuplicateContact(headline: string, contact: ResumeData["conta
   const hl = headline.toLowerCase();
   if (contact.email && hl.includes(contact.email.toLowerCase())) return true;
   if (contact.phone) {
-    const phoneDigits = contact.phone.replace(/\D/g, "");
+    const phoneDigits = String(contact.phone || "").replace(/\D/g, "");
     if (phoneDigits.length >= 5 && hl.includes(phoneDigits)) return true;
   }
   if (contact.location && hl === contact.location.toLowerCase()) return true;
@@ -522,7 +522,7 @@ function buildResumeHtml(r: ResumeData, L: ResumeLayoutModel): string {
   // DYNAMIC SECTIONS
   if (r.dynamicSections && r.dynamicSections.length > 0) {
     for (const ds of r.dynamicSections) {
-      lines.push(`<div class="section-title">${esc(ds.title.toUpperCase())}</div>`);
+      lines.push(`<div class="section-title">${esc((ds?.title || "").toUpperCase())}</div>`);
       if (ds.content) {
         lines.push(`<p>${esc(ds.content)}</p>`);
       }
@@ -589,9 +589,9 @@ export async function exportResumePDF(resume: ResumeData, opts: PDFOptions = {},
 
 function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?: ResumeLayoutModel): { ok: boolean; pages: number; error?: string } {
   const L = layout ?? getDefaultResumeLayout();
-  const nameRgb = hexToRgb(L.nameColor);
-  const bodyRgb = hexToRgb(L.bodyTextColor);
-  const contactRgb = hexToRgb(L.contactColor);
+  const nameRgb = hexToRgb(L.nameColor || "#003366");
+  const bodyRgb = hexToRgb(L.bodyTextColor || "#000000");
+  const contactRgb = hexToRgb(L.contactColor || "#333333");
 
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
 
@@ -792,7 +792,7 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
   if (resume.dynamicSections && resume.dynamicSections.length > 0) {
     for (const ds of resume.dynamicSections) {
       if (y > pageH - L.marginBottomMm - 20) break;
-      sectionHeader(ds.title.toUpperCase());
+      sectionHeader((ds?.title || "").toUpperCase());
       doc.setFont("times", "normal");
       doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
       
@@ -837,7 +837,7 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
 
   // ===== Save =====
   const pages = doc.getNumberOfPages();
-  const fname = (resume.name || "resume").replace(/\s+/g, "_") + "_resume.pdf";
+  const fname = String(resume?.name || "resume").replace(/\s+/g, "_") + "_resume.pdf";
   doc.save(fname);
 
   if (pages > 1 && opts.enforceOnePage !== false) {
@@ -1202,11 +1202,12 @@ function countResumeSections(r: ResumeData): number {
 }
 
 function hexToRgb(hex: string): [number, number, number] {
+  if (!hex || typeof hex !== "string") return [0, 0, 0];
   const m = hex.replace("#", "");
   return [
-    parseInt(m.slice(0, 2), 16),
-    parseInt(m.slice(2, 4), 16),
-    parseInt(m.slice(4, 6), 16),
+    parseInt(m.slice(0, 2), 16) || 0,
+    parseInt(m.slice(2, 4), 16) || 0,
+    parseInt(m.slice(4, 6), 16) || 0,
   ];
 }
 
@@ -1274,9 +1275,9 @@ export function exportResumeTXT(resume: ResumeData, sourceResume?: ResumeData | 
 
   if (resume.dynamicSections && resume.dynamicSections.length > 0) {
     for (const ds of resume.dynamicSections) {
-      lines.push(ds.title.toUpperCase());
+      lines.push((ds?.title || "").toUpperCase());
       if (ds.content) lines.push(ds.content);
-      for (const b of ds.bullets) lines.push(`• ${b}`);
+      for (const b of ds.bullets || []) lines.push(`• ${b}`);
       lines.push("");
     }
   }
@@ -1601,7 +1602,7 @@ export async function exportResumeDOCX(resume: ResumeData, layout?: ResumeLayout
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = (sanitizedResume.name || "resume").replace(/\s+/g, "_") + "_resume.docx";
+  a.download = String(sanitizedResume?.name || resume?.name || "resume").replace(/\s+/g, "_") + "_resume.docx";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1758,7 +1759,7 @@ export function exportInterviewPDF(pkg: InterviewPackage) {
       doc.setFont("helvetica", "italic");
       doc.setTextColor(245, 158, 11);
       doc.setFontSize(9);
-      doc.text(`Difficulty: ${q.difficulty.toUpperCase()}`, left, y);
+      doc.text(`Difficulty: ${(q?.difficulty || "medium").toUpperCase()}`, left, y);
       y += 5;
 
       doc.setFont("helvetica", "bold");
@@ -1832,7 +1833,7 @@ export async function exportInterviewDOCX(pkg: InterviewPackage) {
     children.push(sectionPara(labels[cat], "1154A3"));
     for (const q of grouped[cat]) {
       children.push(new Paragraph({ children: [new TextRun({ text: `Q. ${q.question}`, bold: true, size: 22, color: "0B1F3A" })], spacing: { after: 40 } }));
-      children.push(new Paragraph({ children: [new TextRun({ text: `Difficulty: ${q.difficulty.toUpperCase()}`, italics: true, size: 18, color: "F59E0B" })], spacing: { after: 60 } }));
+      children.push(new Paragraph({ children: [new TextRun({ text: `Difficulty: ${(q?.difficulty || "medium").toUpperCase()}`, italics: true, size: 18, color: "F59E0B" })], spacing: { after: 60 } }));
       children.push(new Paragraph({ children: [new TextRun({ text: "Recommended answer:", bold: true, size: 20 })], spacing: { after: 30 } }));
       children.push(new Paragraph({ children: [new TextRun({ text: q.recommendedAnswer, size: 20, color: "1F2937" })], spacing: { after: 100 } }));
       if (q.talkingPoints?.length) {

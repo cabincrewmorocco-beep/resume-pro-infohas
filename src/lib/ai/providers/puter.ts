@@ -44,29 +44,55 @@ export class PuterProvider implements AIProviderAdapter {
 
   async chat(req: ChatRequest, config: ProviderConfig): Promise<ChatResponse> {
     const t0 = performance.now();
-    const { getPuterProvider } = await import("../../providers/puter-provider");
+    const { getPuterProvider, dismissPuterModals } = await import("../../providers/puter-provider");
+    const { markProviderQuotaCooldown, isProviderInCooldown } = await import("../../provider-cooldown");
+
+    if (isProviderInCooldown(config.id) || isProviderInCooldown("p_puter") || isProviderInCooldown("puter")) {
+      dismissPuterModals();
+      throw new Error("Puter is currently in cooldown due to low balance/quota exhaustion.");
+    }
+
     const puter = getPuterProvider();
     const model = req.model || config.modelName;
 
-    // Delegate execution to the canonical Puter OAuth provider to reuse its
-    // robust account rotation on 429, session checks, and anonymous fallback.
-    const result = await puter.generate({
-      systemPrompt: req.messages.find((m) => m.role === "system")?.content,
-      userPrompt: req.messages.find((m) => m.role === "user")?.content || "",
-      maxTokens: req.maxTokens,
-      temperature: supportsCustomTemperature(model) ? req.temperature : undefined,
-      topP: req.topP,
-      model: model,
-    });
+    try {
+      // Delegate execution to the canonical Puter OAuth provider to reuse its
+      // robust account rotation on 429, session checks, and anonymous fallback.
+      const result = await puter.generate({
+        systemPrompt: req.messages.find((m) => m.role === "system")?.content,
+        userPrompt: req.messages.find((m) => m.role === "user")?.content || "",
+        maxTokens: req.maxTokens,
+        temperature: supportsCustomTemperature(model) ? req.temperature : undefined,
+        topP: req.topP,
+        model: model,
+      });
 
-    return {
-      text: result.text,
-      provider: result.provider,
-      model: req.model || config.modelName || "puter-default",
-      latencyMs: Math.round(performance.now() - t0),
-      inputTokens: undefined,
-      outputTokens: undefined,
-    };
+      return {
+        text: result.text,
+        provider: result.provider,
+        model: req.model || config.modelName || "puter-default",
+        latencyMs: Math.round(performance.now() - t0),
+        inputTokens: undefined,
+        outputTokens: undefined,
+      };
+    } catch (e: any) {
+      dismissPuterModals();
+      const msg = (e?.message || String(e ?? "")).toLowerCase();
+      if (
+        msg.includes("low balance") ||
+        msg.includes("not enough funding") ||
+        msg.includes("upgrade to continue") ||
+        msg.includes("no usage left") ||
+        msg.includes("please upgrade") ||
+        msg.includes("quota") ||
+        msg.includes("credits")
+      ) {
+        markProviderQuotaCooldown(config.id);
+        markProviderQuotaCooldown("p_puter");
+        markProviderQuotaCooldown("puter");
+      }
+      throw e;
+    }
   }
 
   async testConnection(config: ProviderConfig) {
@@ -92,12 +118,20 @@ export class PuterProvider implements AIProviderAdapter {
    */
   async stream(req: ChatRequest, config: ProviderConfig, onChunk: (text: string) => void): Promise<ChatResponse> {
     const t0 = performance.now();
+
+    const { dismissPuterModals, getPuterProvider } = await import("../../providers/puter-provider");
+    dismissPuterModals();
+
+    const { isProviderInCooldown, markProviderQuotaCooldown } = await import("../../provider-cooldown");
+    if (isProviderInCooldown("p_puter") || isProviderInCooldown("puter")) {
+      throw new Error("Puter is in quota cooldown.");
+    }
+
     await loadPuterScript();
     if (typeof window === "undefined" || !window.puter?.ai?.chat) {
       throw new Error("Puter.js is not available for streaming.");
     }
 
-    const { getPuterProvider } = await import("../../providers/puter-provider");
     const puter = getPuterProvider();
     if (!puter.isAuthenticated() && !window.puter?.ai?.chat) {
       throw new Error("Puter authentication required for streaming.");
@@ -170,6 +204,21 @@ export class PuterProvider implements AIProviderAdapter {
         delete retryOpts.temperature;
         fullText = await runStream(retryOpts);
       } else {
+        dismissPuterModals();
+        const msg = (streamErr?.message || String(streamErr ?? "")).toLowerCase();
+        if (
+          /402/.test(msg) ||
+          /low balance/i.test(msg) ||
+          /funding/i.test(msg) ||
+          /upgrade/i.test(msg) ||
+          /payment required/i.test(msg) ||
+          /quota/i.test(msg) ||
+          /rate.?limit/i.test(msg) ||
+          /insufficient/i.test(msg)
+        ) {
+          markProviderQuotaCooldown("p_puter");
+          markProviderQuotaCooldown("puter");
+        }
         throw streamErr;
       }
     }

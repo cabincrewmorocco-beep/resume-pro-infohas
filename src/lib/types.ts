@@ -929,7 +929,7 @@ export interface RenderContentItem {
   level?: number;
   bullets?: string[];
   groups?: Array<{ label: string; items: string[] }>;
-  cells?: Array<{ text?: string; align?: string }>;
+  cells?: Array<{ text?: string; align?: string; bold?: boolean; [key: string]: unknown }>;
   [key: string]: unknown;
 }
 

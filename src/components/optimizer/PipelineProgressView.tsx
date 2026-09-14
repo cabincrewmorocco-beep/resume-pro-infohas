@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Icon } from "@/components/shared";
 import type { PipelineProgress, PipelineResult, PipelineStep } from "@/lib/agents";
 import { getStageDisplayName, normalizeStageIndex } from "@/lib/agents/pipeline-retry-wrapper";
+import { PipelineDiagnosticOverlay } from "./PipelineDiagnosticOverlay";
 
 /**
  * PipelineProgressView — shows real-time progress of the 7-step optimization pipeline.
@@ -24,6 +26,7 @@ import { getStageDisplayName, normalizeStageIndex } from "@/lib/agents/pipeline-
  *   - error state (✗ red + error message)
  *   - execution time (seconds)
  *   - granular resume action when halted
+ *   - diagnostic overlay for deep log & step index inspection
  */
 
 interface PipelineProgressViewProps {
@@ -33,6 +36,8 @@ interface PipelineProgressViewProps {
   result?: PipelineResult | null;
   /** Error message if the pipeline failed (for retry UI) */
   error?: string | null;
+  /** Detailed pipeline log lines for diagnostic overlay */
+  logs?: string[];
   /** Retry callback (runs from beginning) */
   onRetry?: () => void;
   /** Granular resume callback: resumes pipeline starting at the specified stage index or id */
@@ -52,7 +57,17 @@ const ALL_STEPS = [
   { id: 7, name: "Export Preparation", icon: "Download", agent: "Export", stageId: "export" },
 ];
 
-export function PipelineProgressView({ progress, isRunning, result, error, onRetry, onResumeFromStage }: PipelineProgressViewProps) {
+export function PipelineProgressView({
+  progress,
+  isRunning,
+  result,
+  error,
+  logs = [],
+  onRetry,
+  onResumeFromStage,
+}: PipelineProgressViewProps) {
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
   if (!isRunning && !progress && !result && !error) return null;
 
   const percent = progress?.percent ?? (result ? 100 : 0);
@@ -187,12 +202,33 @@ export function PipelineProgressView({ progress, isRunning, result, error, onRet
               : "Pipeline finished"}
           </p>
         </div>
-        {isRunning && etaSeconds > 0 && (
-          <div className="text-right shrink-0">
-            <div className="text-xs font-semibold text-brand">{etaSeconds}s</div>
-            <div className="text-[10px] text-muted-foreground">est. remaining</div>
-          </div>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowDiagnostics(true)}
+            className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 transition active:scale-95 ${
+              isFailedOrError
+                ? "bg-red-500/10 border-red-500/40 text-red-600 hover:bg-red-500/20 shadow-sm"
+                : "bg-secondary/60 hover:bg-secondary border-border text-foreground"
+            }`}
+            title="Open Diagnostic Overlay (stage logs, step index, error analysis)"
+          >
+            <Icon
+              name={isFailedOrError ? "AlertOctagon" : "Activity"}
+              className={`w-3.5 h-3.5 ${isFailedOrError ? "text-red-600 animate-pulse" : "text-brand"}`}
+            />
+            <span className="hidden sm:inline">Diagnostics</span>
+            {isFailedOrError && (
+              <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
+            )}
+          </button>
+          {isRunning && etaSeconds > 0 && (
+            <div className="text-right shrink-0">
+              <div className="text-xs font-semibold text-brand">{etaSeconds}s</div>
+              <div className="text-[10px] text-muted-foreground">est. remaining</div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -277,6 +313,15 @@ export function PipelineProgressView({ progress, isRunning, result, error, onRet
                 </div>
                 {stepError && (
                   <div className="text-[10px] text-red-600 dark:text-red-400 mt-0.5 truncate">{stepError}</div>
+                )}
+                {(isCurrentFailedStep || stepError) && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnostics(true)}
+                    className="text-[10px] text-red-600 dark:text-red-400 font-semibold hover:underline flex items-center gap-1 mt-0.5"
+                  >
+                    <Icon name="Search" className="w-2.5 h-2.5" /> View Step Diagnostics
+                  </button>
                 )}
               </div>
 
@@ -371,34 +416,58 @@ export function PipelineProgressView({ progress, isRunning, result, error, onRet
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-1 border-t border-red-200/60 dark:border-red-900/40 flex-wrap">
-            {onResumeFromStage && failedStageIndex !== undefined && (
-              <button
-                type="button"
-                onClick={() => onResumeFromStage(failedStageIndex)}
-                className="text-xs font-semibold text-white bg-brand hover:bg-brand-dark px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition active:scale-95"
-              >
-                <Icon name="Play" className="w-3.5 h-3.5" />
-                Resume from {failedStageDisplayName}
-              </button>
-            )}
-            {onRetry && (
-              <button
-                type="button"
-                onClick={onRetry}
-                className={`text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 ${
-                  onResumeFromStage && failedStageIndex !== undefined
-                    ? "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border"
-                    : "text-white bg-red-600 hover:bg-red-700"
-                }`}
-              >
-                <Icon name="RotateCcw" className="w-3.5 h-3.5" />
-                {onResumeFromStage && failedStageIndex !== undefined ? "Retry Full Pipeline" : "Retry"}
-              </button>
-            )}
+          <div className="flex items-center justify-between gap-2 pt-1 border-t border-red-200/60 dark:border-red-900/40 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowDiagnostics(true)}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-800 bg-red-100/80 dark:bg-red-900/40 hover:bg-red-200/80 text-red-900 dark:text-red-100 flex items-center gap-1.5 transition active:scale-95 shadow-sm"
+              title="Open detailed diagnostic overlay with exact logs and step indices"
+            >
+              <Icon name="AlertOctagon" className="w-3.5 h-3.5 text-red-600" />
+              <span>Diagnostic Overlay {failedStageIndex !== undefined ? `(Step Index ${failedStageIndex})` : ""}</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              {onResumeFromStage && failedStageIndex !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => onResumeFromStage(failedStageIndex)}
+                  className="text-xs font-semibold text-white bg-brand hover:bg-brand-dark px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition active:scale-95"
+                >
+                  <Icon name="Play" className="w-3.5 h-3.5" />
+                  Resume from {failedStageDisplayName}
+                </button>
+              )}
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className={`text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 ${
+                    onResumeFromStage && failedStageIndex !== undefined
+                      ? "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border"
+                      : "text-white bg-red-600 hover:bg-red-700"
+                  }`}
+                >
+                  <Icon name="RotateCcw" className="w-3.5 h-3.5" />
+                  {onResumeFromStage && failedStageIndex !== undefined ? "Retry Full Pipeline" : "Retry"}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
+
+      {/* Diagnostic Overlay */}
+      <PipelineDiagnosticOverlay
+        isOpen={showDiagnostics}
+        onClose={() => setShowDiagnostics(false)}
+        progress={progress}
+        result={result}
+        error={error}
+        logs={logs}
+        onResumeFromStage={onResumeFromStage}
+        onRetry={onRetry}
+      />
     </motion.div>
   );
 }

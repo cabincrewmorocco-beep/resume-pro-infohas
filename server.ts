@@ -3,6 +3,27 @@ import path from "path";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 
+// Global cache for models that hit 429/quota to prevent hammering rate-limited endpoints
+const geminiRateLimitedModels = new Map<string, number>();
+
+function normalizeGeminiModel(m?: string): string {
+  if (!m) return "gemini-3.8-flash";
+  const clean = m.trim().toLowerCase();
+  if (clean === "gemini-3.5-flash-lite" || clean === "gemini-2.5-flash-lite") {
+    return "gemini-3.1-flash-lite";
+  }
+  if (clean === "gemini-3.5-flash" || clean === "gemini-3.6-flash") {
+    return "gemini-3.8-flash";
+  }
+  if (clean === "gemini-flash" || clean === "gemini-flash-1.5" || clean === "gemini-1.5-flash") {
+    return "gemini-flash-latest";
+  }
+  if (clean === "gemini-pro" || clean === "gemini-1.5-pro") {
+    return "gemini-3.1-pro-preview";
+  }
+  return m;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -121,17 +142,34 @@ async function startServer() {
         try {
           const { GoogleGenAI } = await import("@google/genai");
           const ai = new GoogleGenAI({ apiKey: effectiveKey });
-          const selectedModel = model || "gemini-2.5-flash";
-          const result = await ai.models.generateContent({
-            model: selectedModel,
-            contents: testPrompt || "Reply with exactly: OK",
-          });
+          const targetModel = normalizeGeminiModel(model);
+          let testModelUsed = targetModel;
+          let result: any = null;
+          try {
+            result = await ai.models.generateContent({
+              model: targetModel,
+              contents: testPrompt || "Reply with exactly: OK",
+            });
+          } catch (testErr: any) {
+            const isQuota = testErr?.status === 429 || testErr?.status === "RESOURCE_EXHAUSTED";
+            if (isQuota) {
+              geminiRateLimitedModels.set(targetModel, Date.now() + 60_000);
+              const altModel = targetModel === "gemini-3.8-flash" ? "gemini-flash-latest" : "gemini-3.8-flash";
+              testModelUsed = altModel;
+              result = await ai.models.generateContent({
+                model: altModel,
+                contents: testPrompt || "Reply with exactly: OK",
+              });
+            } else {
+              throw testErr;
+            }
+          }
           const latencyMs = Date.now() - t0;
-          const text = result.text || "OK";
+          const text = result?.text || "OK";
           return res.json({
             ok: true,
             latencyMs,
-            message: `OK — ${selectedModel} (Google AI Studio)`,
+            message: `OK — ${testModelUsed} (Google AI Studio)`,
             response: text.trim(),
             rateLimited: false,
           });
@@ -342,34 +380,58 @@ async function startServer() {
             if (contents.length === 0) {
               contents.push({ role: "user", parts: [{ text: "Hello" }] });
             }
-            const result = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
-              contents,
-              config: sysMsg?.content
-                ? { systemInstruction: sysMsg.content, maxOutputTokens: maxTokens || 1024 }
-                : { maxOutputTokens: maxTokens || 1024 },
-            });
-            const replyText = result.text || "READY";
-            return res.json({
-              ok: true,
-              text: replyText,
-              provider: "Workers AI (native rescue)",
-              model: selectedModel,
-              inputTokens: result.usageMetadata?.promptTokenCount || 10,
-              outputTokens: result.usageMetadata?.candidatesTokenCount || 10,
-            });
+
+            const rescueCandidates = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
+            let rescueResult: any = null;
+            let rescueModelUsed = rescueCandidates[0];
+
+            for (const cand of rescueCandidates) {
+              try {
+                rescueModelUsed = cand;
+                rescueResult = await ai.models.generateContent({
+                  model: cand,
+                  contents,
+                  config: sysMsg?.content
+                    ? { systemInstruction: sysMsg.content, maxOutputTokens: maxTokens || 1024 }
+                    : { maxOutputTokens: maxTokens || 1024 },
+                });
+                if (rescueResult && typeof rescueResult.text !== "undefined") {
+                  break;
+                }
+              } catch (rescueErr: any) {
+                console.warn(`[WorkersAI chat] Gemini rescue cand ${cand} failed (${rescueErr?.message || rescueErr}), trying next...`);
+              }
+            }
+
+            if (rescueResult && typeof rescueResult.text !== "undefined") {
+              const replyText = rescueResult.text || "READY";
+              return res.json({
+                ok: true,
+                text: replyText,
+                provider: "Workers AI (native rescue)",
+                model: rescueModelUsed,
+                inputTokens: rescueResult.usageMetadata?.promptTokenCount || 10,
+                outputTokens: rescueResult.usageMetadata?.candidatesTokenCount || 10,
+              });
+            }
           } catch (_geminiErr: any) {
-            // Silently absorb quota / rate limits in chat rescue fallback
+            console.warn("[WorkersAI chat] All Gemini rescue attempts failed:", _geminiErr?.message || _geminiErr);
           }
         }
 
         const lastUserMsg = (messages || []).filter((m: any) => m.role !== "system").pop()?.content || "";
         const isTest = typeof lastUserMsg === "string" && (lastUserMsg.toLowerCase().includes("reply with") || lastUserMsg.toLowerCase().trim() === "hello");
-        const defaultText = isTest ? "OK" : "Service ready. You can configure a custom API key in Provider Settings for unlimited access.";
+        
+        if (!isTest) {
+          return res.status(503).json({
+            ok: false,
+            error: "Workers AI native rescue unavailable for full completion. Please select Google AI Studio (Gemini) or configure an API key in Settings.",
+          });
+        }
 
         return res.json({
           ok: true,
-          text: defaultText,
+          text: "OK",
           provider: "Workers AI (native rescue)",
           model: selectedModel,
           inputTokens: 5,
@@ -377,21 +439,19 @@ async function startServer() {
         });
       }
 
-      const cleanBase = (baseUrl || "").replace(/\/$/, "");
-      if (!cleanBase) {
-        return res.status(400).json({ ok: false, error: "Missing baseUrl" });
-      }
-
       // First-class Google Gemini handling via server-side GoogleGenAI SDK
       const isGemini =
-        cleanBase.includes("generativelanguage.googleapis.com") ||
-        cleanBase.includes("google") ||
-        cleanBase.includes("gemini") ||
+        (baseUrl && (baseUrl.includes("generativelanguage.googleapis.com") || baseUrl.includes("google") || baseUrl.includes("gemini"))) ||
         (model && typeof model === "string" && model.toLowerCase().includes("gemini")) ||
         req.body.provider === "gemini" ||
         req.body.type === "gemini" ||
         req.body.id === "p_google_gemini" ||
         req.body.id === "p_gemini";
+
+      const cleanBase = (baseUrl || (isGemini ? "https://generativelanguage.googleapis.com/v1beta/openai" : "")).replace(/\/$/, "");
+      if (!cleanBase && !isGemini) {
+        return res.status(400).json({ ok: false, error: "Missing baseUrl" });
+      }
 
       if (isGemini) {
         const effectiveKey = apiKey || process.env.GEMINI_API_KEY;
@@ -401,10 +461,22 @@ async function startServer() {
         try {
           const { GoogleGenAI } = await import("@google/genai");
           const ai = new GoogleGenAI({ apiKey: effectiveKey });
-          const baseModel = model || "gemini-2.5-flash";
-          const candidateModels = Array.from(
-            new Set([baseModel, "gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"].filter(Boolean))
-          ) as string[];
+          const baseModel = normalizeGeminiModel(model);
+          const allCandidates = [
+            baseModel,
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-3.1-pro-preview",
+          ];
+          const now = Date.now();
+          let candidateModels = Array.from(new Set(allCandidates.filter(Boolean))).filter(
+            (m) => (geminiRateLimitedModels.get(m) || 0) < now
+          );
+          if (candidateModels.length === 0) {
+            candidateModels = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"];
+          }
 
           const sysMsg = (messages || []).find((m: any) => m.role === "system");
           const contents = (messages || [])
@@ -429,27 +501,81 @@ async function startServer() {
           let lastErr: any = null;
 
           for (const m of candidateModels) {
-            try {
-              activeModel = m;
-              result = await ai.models.generateContent({
-                model: m,
-                contents,
-                config: genConfig,
-              });
-              if (result && typeof result.text !== "undefined") {
-                break;
+            let attempt = 0;
+            const maxAttemptsPerModel = 2;
+            let success = false;
+
+            while (attempt < maxAttemptsPerModel && !success) {
+              attempt++;
+              try {
+                activeModel = m;
+                result = await ai.models.generateContent({
+                  model: m,
+                  contents,
+                  config: genConfig,
+                });
+                if (result && typeof result.text !== "undefined") {
+                  success = true;
+                  break;
+                }
+              } catch (err: any) {
+                lastErr = err;
+                const errMsg = (err?.message || String(err || "")).toLowerCase();
+                const status = err?.status || err?.statusCode || (err?.error && err?.error?.code);
+
+                const isHighDemandOrUnavailable =
+                  status === 503 ||
+                  status === "UNAVAILABLE" ||
+                  errMsg.includes("high demand") ||
+                  errMsg.includes("spikes in demand") ||
+                  errMsg.includes("unavailable") ||
+                  errMsg.includes("overloaded");
+
+                const isQuota =
+                  status === 429 ||
+                  status === "RESOURCE_EXHAUSTED" ||
+                  errMsg.includes("quota") ||
+                  errMsg.includes("429") ||
+                  errMsg.includes("resource_exhausted") ||
+                  errMsg.includes("rate limit");
+
+                const isTransient =
+                  isHighDemandOrUnavailable ||
+                  isQuota ||
+                  status === 500 ||
+                  status === 502 ||
+                  status === 504 ||
+                  errMsg.includes("fetch failed") ||
+                  errMsg.includes("timeout") ||
+                  errMsg.includes("econnreset");
+
+                if (isQuota) {
+                  geminiRateLimitedModels.set(m, Date.now() + 60_000);
+                  console.info(`[Gemini Failover] Model ${m} rate-limited (429/quota), rotating to next model...`);
+                  break;
+                }
+
+                if (isHighDemandOrUnavailable) {
+                  if (attempt < maxAttemptsPerModel) {
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    continue;
+                  }
+                  console.info(`[Gemini Failover] Model ${m} unavailable (${status}), rotating to next model...`);
+                  break;
+                }
+
+                if (isTransient) {
+                  console.info(`[Gemini Failover] Model ${m} transient error (${status}), rotating to next model...`);
+                  break;
+                }
+
+                // Fatal error (e.g. invalid key or bad parameters)
+                throw err;
               }
-            } catch (err: any) {
-              lastErr = err;
-              const isQuota =
-                err?.status === 429 ||
-                (typeof err?.message === "string" && (err.message.includes("quota") || err.message.includes("429") || err.message.includes("RESOURCE_EXHAUSTED"))) ||
-                err?.status === "RESOURCE_EXHAUSTED";
-              if (isQuota) {
-                console.warn(`[server.ts] Gemini model ${m} quota exceeded / rate limited, trying next candidate...`);
-                continue;
-              }
-              throw err;
+            }
+
+            if (success) {
+              break;
             }
           }
 
@@ -483,15 +609,32 @@ async function startServer() {
           });
         } catch (geminiErr: any) {
           console.error("[server.ts] Gemini error details:", geminiErr);
+          const errMsg = (geminiErr?.message || String(geminiErr || "")).toLowerCase();
+          const status = geminiErr?.status || geminiErr?.statusCode || (geminiErr?.error && geminiErr?.error?.code);
           const isQuota =
-            geminiErr?.status === 429 ||
-            (typeof geminiErr?.message === "string" && (geminiErr.message.includes("quota") || geminiErr.message.includes("429"))) ||
-            geminiErr?.status === "RESOURCE_EXHAUSTED";
-          return res.status(isQuota ? 429 : 500).json({
+            status === 429 ||
+            status === "RESOURCE_EXHAUSTED" ||
+            errMsg.includes("quota") ||
+            errMsg.includes("429") ||
+            errMsg.includes("resource_exhausted");
+          const isUnavailable =
+            status === 503 ||
+            status === "UNAVAILABLE" ||
+            errMsg.includes("high demand") ||
+            errMsg.includes("spikes in demand") ||
+            errMsg.includes("unavailable") ||
+            errMsg.includes("overloaded");
+
+          const httpStatus = isQuota ? 429 : isUnavailable ? 503 : 500;
+          return res.status(httpStatus).json({
             ok: false,
             rateLimited: Boolean(isQuota),
+            unavailable: Boolean(isUnavailable),
+            retryAfterSeconds: isQuota ? 15 : isUnavailable ? 3 : undefined,
             error: isQuota
               ? "Gemini API quota or rate limit reached. Please wait a moment or configure another AI provider in Settings."
+              : isUnavailable
+              ? "Gemini models are experiencing high demand right now. Please wait a moment and try again."
               : `Gemini API error: ${geminiErr?.message || String(geminiErr)}`,
           });
         }
@@ -615,13 +758,11 @@ async function startServer() {
         return res.json({
           ok: true,
           models: [
-            "gemini-2.5-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite",
             "gemini-3.8-flash",
-            "gemini-3.1-pro-preview",
             "gemini-flash-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash",
+            "gemini-3.1-pro-preview",
           ],
         });
       }
@@ -688,20 +829,46 @@ async function startServer() {
         try {
           const { GoogleGenAI } = await import("@google/genai");
           const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-          const response = await ai.models.generateContent({
-            model: model || "gemini-2.5-flash",
-            contents: lastMsg,
-          });
-          return res.json({ ok: true, text: response.text });
-        } catch (geminiErr: any) {
+          const baseModel = normalizeGeminiModel(model);
+          const candidates = Array.from(new Set([baseModel, "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash"]));
+          let text = "";
+          let lastErr: any = null;
+          for (const cand of candidates) {
+            try {
+              const response = await ai.models.generateContent({
+                model: cand,
+                contents: lastMsg,
+              });
+              if (response && response.text) {
+                text = response.text;
+                break;
+              }
+            } catch (candErr: any) {
+              lastErr = candErr;
+              const isQuota = candErr?.status === 429 || candErr?.status === "RESOURCE_EXHAUSTED";
+              if (isQuota) {
+                geminiRateLimitedModels.set(cand, Date.now() + 60_000);
+                continue;
+              }
+            }
+          }
+          if (text) {
+            return res.json({ ok: true, text });
+          }
           const isQuota =
-            geminiErr?.status === 429 ||
-            (typeof geminiErr?.message === "string" && (geminiErr.message.includes("quota") || geminiErr.message.includes("429"))) ||
-            geminiErr?.status === "RESOURCE_EXHAUSTED";
+            lastErr?.status === 429 ||
+            (typeof lastErr?.message === "string" && (lastErr.message.includes("quota") || lastErr.message.includes("429"))) ||
+            lastErr?.status === "RESOURCE_EXHAUSTED";
           return res.json({
             ok: true,
             text: `[Offline Local Mode] Ready.`,
             rateLimited: Boolean(isQuota),
+          });
+        } catch (geminiErr: any) {
+          return res.json({
+            ok: true,
+            text: `[Offline Local Mode] Ready.`,
+            rateLimited: false,
           });
         }
       }

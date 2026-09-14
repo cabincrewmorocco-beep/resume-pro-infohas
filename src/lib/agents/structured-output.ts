@@ -122,6 +122,37 @@ function extractJSONLoose(text: string): unknown {
 }
 
 /**
+ * Extract an array of bullet points or list items from prose or markdown when the model
+ * returned formatted text instead of JSON array.
+ */
+export function extractListFromProse(rawText: string): string[] {
+  if (!rawText || typeof rawText !== "string") return [];
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const items: string[] = [];
+  for (const line of lines) {
+    // Skip introductory boilerplate
+    if (/^(here\s+(are|is)|sure|below|rewritten\s+bullets|optimized\s+bullets|bullets:)/i.test(line)) {
+      continue;
+    }
+    // Clean bullet symbols (*, -, •, ·, >) or numbered prefixes (1., 1), [1], (1))
+    const cleaned = line
+      .replace(/^[\*\-•·>]\s+/, "")
+      .replace(/^\(?\[?\d+[\.\)\]]\s*/, "")
+      .replace(/^"|"$/g, "")
+      .trim();
+
+    if (cleaned.length > 5) {
+      items.push(cleaned);
+    }
+  }
+  return items;
+}
+
+/**
  * Parse an LLM response into structured data — NEVER throws.
  * Cascade: extractJSON (fence strip + brace scan) → repairMalformedJSON
  * (truncation repair) → schema validation. On total failure returns a
@@ -162,6 +193,19 @@ export function parseAgentJSON<T = unknown>(raw: string, schema?: SchemaSpec): P
       if (deTrailing !== undefined) {
         data = deTrailing;
         repairs.push("Removed trailing comma(s)");
+      } else if (schema?.type === "array") {
+        // Fallback: Model returned prose or markdown list for an array schema
+        const list = extractListFromProse(text);
+        if (list.length > 0) {
+          data = list;
+          repairs.push(`Extracted ${list.length} items from markdown/prose list`);
+        } else {
+          return {
+            ok: false,
+            error: `invalid JSON: ${(extractErr as Error)?.message ?? "unparseable"}`,
+            repairs,
+          };
+        }
       } else {
         return {
           ok: false,
@@ -176,6 +220,44 @@ export function parseAgentJSON<T = unknown>(raw: string, schema?: SchemaSpec): P
 
   if (data === null || data === undefined) {
     return { ok: false, error: "parsed value is null/undefined", repairs };
+  }
+
+  // Auto-unwrap array if schema expects an array but model returned an object wrapper (e.g. { bullets: [...] })
+  if (schema?.type === "array" && typeof data === "object" && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>;
+    const candidate =
+      (Array.isArray(record.bullets) && record.bullets) ||
+      (Array.isArray(record.items) && record.items) ||
+      (Array.isArray(record.list) && record.list) ||
+      (Array.isArray(record.rewritten_bullets) && record.rewritten_bullets) ||
+      (Array.isArray(record.rewrittenBullets) && record.rewrittenBullets) ||
+      (Array.isArray(record.output) && record.output) ||
+      Object.values(record).find((v) => Array.isArray(v));
+
+    if (Array.isArray(candidate)) {
+      data = candidate;
+      repairs.push("Unwrapped array from object container");
+    }
+  }
+
+  // If schema expects array of strings, ensure array items are converted to strings if returned as { bullet: "..." }
+  if (schema?.type === "array" && Array.isArray(data) && schema.items?.type === "string") {
+    data = data
+      .map((item: any) => {
+        if (typeof item === "string") return item;
+        if (typeof item === "object" && item !== null) {
+          return (
+            item.bullet ||
+            item.text ||
+            item.content ||
+            item.description ||
+            Object.values(item).find((v) => typeof v === "string") ||
+            ""
+          );
+        }
+        return String(item ?? "");
+      })
+      .filter((s: string) => s.trim().length > 0);
   }
 
   if (schema) {

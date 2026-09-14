@@ -4,12 +4,22 @@
 
 export function isBillingError(err: unknown): boolean {
   const msg = String((err as any)?.message || err).toLowerCase();
+  const status = (err as any)?.statusCode || (err as any)?.status;
   return (
+    status === 402 ||
     msg.includes("billing") ||
     msg.includes("quota exceeded") ||
     msg.includes("insufficient_quota") ||
+    msg.includes("insufficient quota") ||
     msg.includes("credit") ||
-    msg.includes("429")
+    msg.includes("429") ||
+    msg.includes("low balance") ||
+    msg.includes("not enough funding") ||
+    msg.includes("funding") ||
+    msg.includes("no usage left") ||
+    msg.includes("upgrade to continue") ||
+    msg.includes("please upgrade") ||
+    msg.includes("insufficient funds")
   );
 }
 
@@ -34,7 +44,9 @@ export function isRotatableAuthError(err: unknown): boolean {
   );
 }
 
-export async function tryRotateProviderToken(providerId: string): Promise<boolean> {
+export async function tryRotateProviderToken(
+  providerOrId: string | { id: string }
+): Promise<{ success: boolean; newToken?: string }> {
   // Token rotation attempted; returns false if no secondary key configured
-  return false;
+  return { success: false };
 }

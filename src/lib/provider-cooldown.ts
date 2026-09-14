@@ -128,8 +128,8 @@ function clearLocal(id: string): void {
   } catch { /* ignore */ }
 }
 
-/** Quota-exhaustion wording inside a 429 body (mirrors the healer's classifier). */
-const QUOTA_EXHAUSTION_RE = /FreeUsageLimitError|usage.?limit|quota|daily|monthly/i;
+/** Quota-exhaustion wording inside a 429/402 body (mirrors the healer's classifier). */
+const QUOTA_EXHAUSTION_RE = /FreeUsageLimitError|usage.?limit|quota|daily|monthly|low balance|funding|no usage left|upgrade to continue|please upgrade|insufficient.?credits?|insufficient.?funds?/i;
 
 /** Returns true if a named provider is in cooldown. */
 export function isProviderInCooldown(providerId: string): boolean {
@@ -440,19 +440,27 @@ export function recordTrafficCooldownFromError(opts: {
   if (opts.requestType === "test") return null;
 
   const msg = opts.error?.message ?? String(opts.error ?? "");
-  const status = opts.statusCode ?? opts.error?.statusCode;
-  if (status === 429 || /429/.test(msg) || /rate.?limit/i.test(msg) || /FreeUsageLimitError/i.test(msg)) {
+  const status = opts.statusCode ?? opts.error?.statusCode ?? opts.error?.status;
+  const isQuotaOrBalance =
+    status === 429 ||
+    status === 402 ||
+    /429/.test(msg) ||
+    /rate.?limit/i.test(msg) ||
+    /FreeUsageLimitError/i.test(msg) ||
+    QUOTA_EXHAUSTION_RE.test(msg);
+
+  if (isQuotaOrBalance) {
     rateLimitTracker.record429(opts.providerId, opts.modelName ?? "default");
     // P1/P2 — three evidence classes, most specific wins:
     //   1. Retry-After (exact window relayed by the proxy) — honored verbatim,
     //      clamped to [5s, PROVIDER_QUOTA_COOLDOWN_MS].
-    //   2. Quota-exhaustion wording — the long window (a quota will NOT reset
+    //   2. Quota-exhaustion / low-balance wording — the long window (a quota will NOT reset
     //      in 3 minutes; short windows caused the all-day retry treadmill).
     //   3. Plain 429 (burst/short limit) — the classic 3-minute window.
     const retryAfterS = parseRetryAfterSeconds(opts.error);
     if (retryAfterS !== null) {
       markProviderRateLimitCooldown(opts.cooldownId, retryAfterS * 1000);
-    } else if (QUOTA_EXHAUSTION_RE.test(msg)) {
+    } else if (QUOTA_EXHAUSTION_RE.test(msg) || status === 402) {
       markProviderQuotaCooldown(opts.cooldownId);
     } else {
       markProvider429Cooldown(opts.cooldownId);

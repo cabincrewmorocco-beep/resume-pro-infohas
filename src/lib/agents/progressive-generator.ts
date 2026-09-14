@@ -25,6 +25,7 @@ import type { ResumeData, JobDescription } from "../types";
 import type { OptimizerOutput } from "../resume-assembler";
 import { parseAgentJSON, runWithParseRepair } from "./structured-output";
 import { globalEventBus } from "../agent-event-bus";
+import { isJdCompanyOrLocation } from "../structure-guardian";
 
 export interface ProgressiveStageResult {
   stage: string;
@@ -101,7 +102,9 @@ Title: ${this.jd.title}
 Company: ${this.jd.company ?? ""}
 Keywords: ${(this.jd.keywords ?? []).join(", ")}
 
-Write a 60-90 word professional summary that positions the candidate for this role. Use only information from the candidate's resume. Do not fabricate experience.`;
+Write a 60-90 word professional summary that positions the candidate for this role.
+Crucial: Naturally weave in 2-3 relevant transferable keywords from the TARGET JOB KEYWORDS list where relevant to the candidate's background (e.g. role focus, transferable domains).
+Use only information from the candidate's resume. Do not fabricate experience.`;
 
     try {
       const result = await this.callAI({ systemPrompt, userPrompt, maxTokens: 400, temperature: 0.3 });
@@ -226,6 +229,29 @@ Return ONLY a JSON array of strings. Example: ["Rewrote bullet 1...", "Rewrote b
     if (experiences.length > 0) {
       patch.experiences = experiences;
     }
+
+    // If JD has transferable keywords that aren't company or location names,
+    // propose transferable skills so the keyword integration floor is reliably satisfied.
+    if (Array.isArray(this.jd.keywords) && this.jd.keywords.length > 0) {
+      const existingNames = new Set(this.originalResume.skills.map((s) => s.name.toLowerCase()));
+      const validSkillCandidates = this.jd.keywords
+        .map((k) => String(k).trim())
+        .filter((k) => {
+          if (!k || k.length < 3 || k.length > 35) return false;
+          const lower = k.toLowerCase();
+          if (existingNames.has(lower)) return false;
+          if (isJdCompanyOrLocation(k, this.jd.rawText)) return false;
+          return true;
+        });
+
+      if (validSkillCandidates.length > 0) {
+        patch.skills = validSkillCandidates.slice(0, 3).map((name) => ({
+          name,
+          level: "Intermediate",
+        }));
+      }
+    }
+
     return patch;
   }
 

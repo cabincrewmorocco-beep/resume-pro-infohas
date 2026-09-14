@@ -26,13 +26,26 @@ export const JD_COMPANY_NAMES: Set<string> = new Set([
   "saudia",
 ]);
 
+// Legitimate software/tech tools that should never be classified as company employer hallucinations
+const TECH_SOFTWARE_SKILLS_REGEX =
+  /\b(word|excel|powerpoint|outlook|office|365|azure|teams|access|project|visio|sharepoint|onedrive|suite|docs|sheets|slides|drive|cloud|workspace|aws|s3|ec2|dynamodb|lambda|photoshop|illustrator|indesign|acrobat|premiere|after effects|figma|canva|salesforce|jira|confluence|slack|zoom)\b/i;
+
 export function isJdCompanyOrLocation(name: string, jdText: string = ""): boolean {
   if (!name) return false;
   const lower = name.toLowerCase().trim();
   if (!lower) return false;
-  
+
+  // Never flag legitimate software skills (e.g. "Microsoft Word", "Microsoft Outlook", "Google Docs")
+  if (TECH_SOFTWARE_SKILLS_REGEX.test(lower)) {
+    return false;
+  }
+
   for (const company of JD_COMPANY_NAMES) {
-    if (lower === company || lower.includes(company) || company.includes(lower)) {
+    if (lower === company) {
+      return true;
+    }
+    // If the candidate skill literally is the company name with suffix like "Inc", "Corp", "Group"
+    if (lower.startsWith(company) && (lower === `${company} group` || lower === `${company} corp` || lower === `${company} inc` || lower === `${company} co`)) {
       return true;
     }
   }
@@ -83,13 +96,31 @@ export function sanitizeSkillsAgainstJd(
   sourceResume?: any,
   jdText: string = ""
 ): any {
+  // Build lookup of source resume skills — source skills are authentic and must NEVER be removed
+  const sourceSkillsSet = new Set<string>();
+  if (sourceResume && typeof sourceResume === "object") {
+    const rawSource = Array.isArray(sourceResume.skills) ? sourceResume.skills : [];
+    for (const s of rawSource) {
+      const sName = typeof s === "string" ? s : s?.name || "";
+      if (sName) {
+        sourceSkillsSet.add(sName.toLowerCase().trim());
+      }
+    }
+  }
+
+  const isSourceSkill = (skillName: string): boolean => {
+    if (!skillName) return false;
+    const lower = skillName.toLowerCase().trim();
+    return sourceSkillsSet.has(lower);
+  };
+
   if (target && typeof target === "object" && !Array.isArray(target) && "skills" in target) {
     const resume = { ...target };
     const skills = resume.skills || [];
     const removedSkills: string[] = [];
     const keptSkills = skills.filter((s: any) => {
       const name = typeof s === "string" ? s : s?.name || "";
-      if (isJdCompanyOrLocation(name, jdText)) {
+      if (!isSourceSkill(name) && isJdCompanyOrLocation(name, jdText)) {
         removedSkills.push(name);
         return false;
       }
@@ -103,7 +134,7 @@ export function sanitizeSkillsAgainstJd(
   const removedSkills: string[] = [];
   const kept = skillsArray.filter((s: any) => {
     const name = typeof s === "string" ? s : s?.name || "";
-    if (isJdCompanyOrLocation(name, jdText)) {
+    if (!isSourceSkill(name) && isJdCompanyOrLocation(name, jdText)) {
       removedSkills.push(name);
       return false;
     }

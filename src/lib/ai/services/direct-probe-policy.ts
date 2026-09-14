@@ -47,6 +47,8 @@ export interface DirectProbeContext {
   isBrowser: boolean;
   /** Hosts remembered as CORS/network-hostile (not yet expired). */
   blockedHosts: ReadonlySet<string>;
+  /** Optional API key */
+  apiKey?: string;
 }
 
 /** Extract the hostname from a base URL; null when absent/unparseable. */
@@ -71,6 +73,9 @@ export function shouldAttemptDirectProbe(ctx: DirectProbeContext): boolean {
   const host = extractProbeHost(ctx.baseUrl);
   if (!host) return false;
   if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return false;
+  // Google's Generative Language API strictly requires server-side proxying (our architecture rule)
+  // and direct client fetch causes 400 Bad Request if missing query params/headers.
+  if (host === "generativelanguage.googleapis.com") return false;
   if (ctx.blockedHosts.has(host)) return false;
   return true;
 }

@@ -70,6 +70,109 @@ function loadPuterScript(): Promise<void> {
 }
 
 
+let puterObserverInstalled = false;
+
+/**
+ * Automatically observe and instantly remove any low balance / funding modal
+ * popups that Puter.js dynamically injects into the DOM.
+ */
+export function installPuterModalObserver(): void {
+  if (typeof document === "undefined" || puterObserverInstalled) return;
+  puterObserverInstalled = true;
+
+  try {
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType === 1) {
+            const el = node as HTMLElement;
+            const text = el.textContent || "";
+            if (
+              (text.includes("Low Balance") ||
+                text.includes("not enough funding") ||
+                text.includes("Upgrade to continue") ||
+                text.includes("Upgrade Now")) &&
+              (text.includes("funding") || text.includes("Puter") || text.includes("Close") || text.includes("Balance"))
+            ) {
+              try {
+                // Click close button if present
+                const closeBtn = el.querySelector("button, [role='button'], a");
+                if (closeBtn) (closeBtn as HTMLElement).click();
+              } catch {}
+              el.remove();
+            }
+          }
+        }
+      }
+    });
+
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener("DOMContentLoaded", () => {
+        if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+      });
+    }
+  } catch {}
+}
+
+// Install observer immediately in browser environments
+if (typeof window !== "undefined") {
+  installPuterModalObserver();
+}
+
+/**
+ * Remove or close any modal popups injected into the DOM by Puter.js
+ * when an account has low balance / insufficient funding.
+ */
+export function dismissPuterModals(): void {
+  if (typeof document === "undefined") return;
+  try {
+    installPuterModalObserver();
+    const selector = "div, dialog, section, [role='dialog'], [aria-modal='true']";
+    const candidates = document.querySelectorAll(selector);
+    candidates.forEach((el) => {
+      const text = el.textContent || "";
+      const isPuterModal =
+        (text.includes("Low Balance") ||
+          text.includes("not enough funding") ||
+          text.includes("Upgrade to continue") ||
+          text.includes("No usage left") ||
+          text.includes("Please upgrade")) &&
+        (text.includes("Upgrade Now") ||
+          text.includes("Close") ||
+          text.toLowerCase().includes("puter"));
+
+      if (isPuterModal) {
+        // Find and click any close button first
+        const buttons = el.querySelectorAll("button, [role='button'], a");
+        let closed = false;
+        buttons.forEach((btn) => {
+          const btnText = btn.textContent?.toLowerCase().trim() || "";
+          if (btnText === "close" || btnText.includes("close") || btnText === "✕" || btnText === "×") {
+            (btn as HTMLElement).click();
+            closed = true;
+          }
+        });
+        
+        // Remove the top-most dialog/modal container
+        const target = el.closest("[role='dialog'], [aria-modal='true']") || el;
+        target.remove();
+      }
+    });
+
+    // Also remove any stray modal backdrops if left behind
+    const backdrops = document.querySelectorAll(".puter-modal-backdrop, [class*='puter-modal'], div[style*='z-index: 9999'], div[style*='z-index:9999']");
+    backdrops.forEach((b) => {
+      if ((b.textContent || "").includes("funding") || (b.textContent || "").includes("Balance")) {
+        b.remove();
+      }
+    });
+  } catch (e) {
+    // Non-fatal cleanup
+  }
+}
+
 export interface PuterAccount {
   id: string;
   email: string;
@@ -594,6 +697,19 @@ export class PuterProvider implements OAuthAIProvider {
     topP?: number;
     model?: string;
   }): Promise<{ text: string; provider: string; latencyMs: number }> {
+    // If Puter is already cooling down or exhausted, fail fast without triggering Puter DOM modal
+    if (typeof window !== "undefined") {
+      const { isProviderInCooldown } = await import("../provider-cooldown");
+      if (isProviderInCooldown("p_puter") || isProviderInCooldown("puter")) {
+        dismissPuterModals();
+        throw new ProviderAuthenticationError(
+          "quota_exhausted",
+          "Puter account balance/quota exhausted. Falling back to next configured provider.",
+          "puter"
+        );
+      }
+    }
+
     // AUTH CHECK — try authenticated first, then anonymous fallback
     if (!this.isAuthenticated()) {
       // Try anonymous mode — Puter.js allows limited anonymous AI calls
@@ -605,6 +721,12 @@ export class PuterProvider implements OAuthAIProvider {
           return { ...result, provider: "Puter.js (anonymous)" };
         } catch (anonErr: any) {
           console.warn("[Puter] Anonymous call failed:", anonErr?.message || anonErr);
+          dismissPuterModals();
+          try {
+            const { markProviderQuotaCooldown } = await import("../provider-cooldown");
+            markProviderQuotaCooldown("p_puter");
+            markProviderQuotaCooldown("puter");
+          } catch {}
           // Fall through to auth error
         }
       }
@@ -636,6 +758,19 @@ export class PuterProvider implements OAuthAIProvider {
     temperature?: number;
     model?: string;
   }): Promise<{ text: string; provider: string; latencyMs: number }> {
+    // If Puter is already cooling down or exhausted, fail fast without triggering Puter DOM modal
+    if (typeof window !== "undefined") {
+      const { isProviderInCooldown } = await import("../provider-cooldown");
+      if (isProviderInCooldown("p_puter") || isProviderInCooldown("puter")) {
+        dismissPuterModals();
+        throw new ProviderAuthenticationError(
+          "quota_exhausted",
+          "Puter account balance/quota exhausted. Falling back to next configured provider.",
+          "puter"
+        );
+      }
+    }
+
     let attempts = 0;
     while (attempts <= this.accounts.length) {
       const t0 = performance.now();
@@ -714,6 +849,8 @@ export class PuterProvider implements OAuthAIProvider {
         const isQuotaOrRateLimit =
           e?.statusCode === 429 ||
           e?.status === 429 ||
+          e?.statusCode === 402 ||
+          e?.status === 402 ||
           /429/.test(msg) ||
           /no usage left/i.test(msg) ||
           /usage.?limit/i.test(msg) ||
@@ -725,15 +862,24 @@ export class PuterProvider implements OAuthAIProvider {
           /insufficient.?credits?/i.test(msg) ||
           /credits?.?exhausted/i.test(msg) ||
           /usage.?exhausted/i.test(msg) ||
-          /freeusagelimit/i.test(msg);
+          /freeusagelimit/i.test(msg) ||
+          /low balance/i.test(msg) ||
+          /not enough funding/i.test(msg) ||
+          /funding/i.test(msg) ||
+          /upgrade to continue/i.test(msg) ||
+          /please upgrade/i.test(msg) ||
+          /upgrade now/i.test(msg) ||
+          /insufficient.?funds?/i.test(msg);
 
         if (isQuotaOrRateLimit) {
            console.log("[PUTER]\nRate limit or quota exhaustion detected:", msg);
+           dismissPuterModals();
+
            const active = this.accounts.find(a => a.active);
            if (active) {
              active.status = "rate_limited";
-             // 1h cooldown before considering this account healthy again
-             const baseCooldownMs = 60 * 60 * 1000;
+             // 2h cooldown before considering this account healthy again
+             const baseCooldownMs = 2 * 60 * 60 * 1000;
              active.cooldownUntil = Date.now() + baseCooldownMs;
              await this.saveAccounts();
            }
@@ -754,10 +900,37 @@ export class PuterProvider implements OAuthAIProvider {
              }
              continue; // Retry with next account
            }
+
+           // All accounts exhausted — record quota cooldown and update provider state
+           if (typeof window !== "undefined") {
+             const { markProviderQuotaCooldown } = await import("../provider-cooldown");
+             const { rateLimitTracker } = await import("../rate-limit-tracker");
+             markProviderQuotaCooldown("p_puter");
+             markProviderQuotaCooldown("puter");
+             rateLimitTracker.record429("p_puter", "default");
+             rateLimitTracker.record429("puter", "default");
+
+             try {
+               const { useApp } = await import("../store");
+               useApp.getState().updateProvider("p_puter", {
+                 status: "degraded",
+                 health: {
+                   healState: "cooldown",
+                   lastError: "Puter account quota/balance exhausted: not enough funding",
+                   rateLimitedUntil: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+                 } as any,
+               });
+             } catch {}
+
+             window.dispatchEvent(new CustomEvent("puter:exhausted", {
+               detail: { reason: msg }
+             }));
+           }
+
            // No healthy account found — break the loop and throw quota exhausted
            throw new ProviderAuthenticationError(
              "quota_exhausted",
-             "All Puter accounts have exhausted their quota or reached rate limits. Please add another account or wait before retrying.",
+             "All Puter accounts have exhausted their quota or reached low balance (insufficient funding). Falling back to next configured provider.",
              "puter"
            );
         }

@@ -106,10 +106,10 @@ export interface HealthObservation {
 // Failure classification (directive #10, #28) — HTTP status → category/state
 // ----------------------------------------------------------------------------
 
-const QUOTA_PATTERNS = /monthly usage limit|usage limit reached|quota exhausted|billing hard limit|insufficient_quota|FreeUsageLimitError/i;
+const QUOTA_PATTERNS = /monthly usage limit|usage limit reached|quota exhausted|billing hard limit|insufficient_quota|FreeUsageLimitError|low balance|not enough funding|funding|no usage left|upgrade to continue|please upgrade|insufficient.?credits?/i;
 const RATE_LIMIT_PATTERNS = /rate.?limit|too many requests|429/i;
 const UNSUPPORTED_MODEL_PATTERNS = /model[s]?[\s`"'/.\w-]{0,60}?(?:not.?found|does.?not.?exist|(?:is.?)?not.?supported|unsupported|invalid model)|not.?found.?for.?api.?version|decommissioned/i;
-const AUTH_PATTERNS = /unauthorized|invalid.?(api.?)?key|authentication|forbidden|permission denied/i;
+const AUTH_PATTERNS = /unauthorized|invalid.?(api.?)?key|authentication|forbidden|permission denied|insufficient.?credits?|low balance|not enough funding/i;
 const TIMEOUT_PATTERNS = /timed? ?out|timeout|ETIMEDOUT|deadline exceeded/i;
 
 /** Classify a raw failure into an explicit category + health state. */

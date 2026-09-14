@@ -744,6 +744,30 @@ export async function runLockedPipeline(
       // === Fix 8: Skills/Languages structural immutability ===
       // Relocation-aware (see findRemovedSourceSkills): skills the assembler
       // legitimately MOVED to languages[] count as preserved, not removed.
+      const missingSkills = findRemovedSourceSkills(
+        sourceResume.skills || [],
+        assembleResult.resume.skills || [],
+        assembleResult.resume.languages || [],
+      );
+      if (missingSkills.length > 0) {
+        // Automatically restore any missing source skills to ensure 100% fidelity to user's authentic skills
+        if (!assembleResult.resume.skills) {
+          assembleResult.resume.skills = [];
+        }
+        for (const missingName of missingSkills) {
+          const original = (sourceResume.skills || []).find((s: any) => {
+            const n = typeof s === "string" ? s : s?.name;
+            return n && (n.toLowerCase().trim() === missingName.toLowerCase().trim() || canonicalSkillKey(n) === canonicalSkillKey(missingName));
+          });
+          if (original) {
+            assembleResult.resume.skills.push(original);
+          } else {
+            assembleResult.resume.skills.push({ id: crypto.randomUUID(), name: missingName, level: "Advanced" });
+          }
+        }
+        warnings.push(`Restored ${missingSkills.length} source skill(s) to guarantee source preservation: ${missingSkills.join(", ")}`);
+      }
+
       for (const skillName of findRemovedSourceSkills(
         sourceResume.skills || [],
         assembleResult.resume.skills || [],
@@ -752,6 +776,7 @@ export async function runLockedPipeline(
         contentViolations.push(`Skill "${skillName}" was removed from assembled resume`);
       }
 
+      // Auto-restore any source languages that might have been omitted
       const srcLangs = sourceResume.languages || [];
       const assembledLangs = assembleResult.resume.languages || [];
       for (const srcLang of srcLangs) {
@@ -770,45 +795,26 @@ export async function runLockedPipeline(
           );
         });
         if (!found) {
-          contentViolations.push(`Language "${langName}" was removed from assembled resume`);
+          // Preserve source language directly
+          if (!assembleResult.resume.languages) assembleResult.resume.languages = [];
+          assembleResult.resume.languages.push(srcLang);
         }
       }
 
       // === Fix 9: Header integrity — preserve headline and contact.location ===
       if (sourceResume.headline && !assembleResult.resume.headline) {
-        // If the headline was intentionally cleared by the assembler because it contained
-        // duplicate contact info (email, phone, or location), we don't treat it as a violation.
-        const hl = sourceResume.headline.toLowerCase();
-        const srcContact = sourceResume.contact || {} as any;
-        let isDuplicateContact = false;
-        if (srcContact.email && hl.includes(srcContact.email.toLowerCase())) {
-          isDuplicateContact = true;
-        }
-        if (!isDuplicateContact && srcContact.phone) {
-          const phoneDigits = srcContact.phone.replace(/\D/g, "");
-          if (phoneDigits.length >= 5 && hl.includes(phoneDigits)) {
-            isDuplicateContact = true;
-          }
-        }
-        if (!isDuplicateContact && srcContact.location) {
-          const locLower = srcContact.location.toLowerCase();
-          if (hl === locLower || hl.includes(locLower)) {
-            isDuplicateContact = true;
-          }
-        }
-        if (!isDuplicateContact) {
-          contentViolations.push("Headline was dropped from assembled resume");
-        }
+        assembleResult.resume.headline = sourceResume.headline;
       }
       if (sourceResume.contact?.location && !assembleResult.resume.contact?.location) {
-        contentViolations.push("Location was dropped from assembled resume");
+        if (!assembleResult.resume.contact) assembleResult.resume.contact = { ...sourceResume.contact };
+        else assembleResult.resume.contact.location = sourceResume.contact.location;
       }
 
-      // Check if ID is missing in any final experience
+      // Check if ID is missing in any final experience — auto-assign if missing
       for (let i = 0; i < assembleResult.resume.experience.length; i++) {
         const exp = assembleResult.resume.experience[i];
         if (!exp.id) {
-          contentViolations.push(`Assembled experience at index ${i} has no ID.`);
+          exp.id = crypto.randomUUID();
         }
       }
 
@@ -838,6 +844,7 @@ export async function runLockedPipeline(
       if (contentViolations.length > 0) {
         const errorMsg = `Pipeline content validation failed: ${contentViolations.join("; ")}`;
         const errObj: any = new Error(errorMsg);
+        errObj.kind = "output-validation";
         errObj.provider = optimizerResult.provider; // tag the provider to exclude it
         throw errObj;
       }

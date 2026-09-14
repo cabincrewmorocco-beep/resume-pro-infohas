@@ -66,11 +66,11 @@ function toDocxAlignment(a: TextAlignment): (typeof AlignmentType)[keyof typeof 
 export async function exportResumeDOCXRenderDoc(
   rd: RenderDocument,
 ): Promise<Blob> {
-  const L = rd.layout;
-  const nameHex = L.nameColor.replace("#", "");
-  const accentHex = L.sectionTitleColor.replace("#", "");
-  const bodyHex = L.bodyTextColor.replace("#", "");
-  const contactHex = L.contactColor.replace("#", "");
+  const L = rd.layout || {};
+  const nameHex = (L.nameColor || "#000000").replace("#", "");
+  const accentHex = (L.sectionTitleColor || "#1154A3").replace("#", "");
+  const bodyHex = (L.bodyTextColor || "#1a1a1a").replace("#", "");
+  const contactHex = (L.contactColor || "#4b5563").replace("#", "");
 
   const children: Paragraph[] = [];
 
@@ -90,9 +90,9 @@ export async function exportResumeDOCXRenderDoc(
     // --- Sidebar: name + headline ---
     sidebarChildren.push(new Paragraph({
       spacing: { after: 60 },
-      children: [new TextRun({ text: (rd.contact.name || "YOUR NAME").toUpperCase(), bold: true, size: Math.min(L.nameSizePt, 20) * 2, font: L.fontFamily, color: white })],
+      children: [new TextRun({ text: (rd.contact?.name || "YOUR NAME").toUpperCase(), bold: true, size: Math.min(L.nameSizePt, 20) * 2, font: L.fontFamily, color: white })],
     }));
-    if (rd.contact.headline) {
+    if (rd.contact?.headline) {
       sidebarChildren.push(new Paragraph({
         spacing: { after: 120 },
         children: [new TextRun({ text: rd.contact.headline, size: L.bodyFontSizePt * 2, font: L.fontFamily, color: white })],
@@ -101,10 +101,10 @@ export async function exportResumeDOCXRenderDoc(
 
     // --- Sidebar: contact ---
     const contactLines = [
-      rd.contact.location,
-      rd.contact.phone,
-      rd.contact.email,
-      rd.contact.dateOfBirth ? `DOB: ${rd.contact.dateOfBirth}` : "",
+      rd.contact?.location,
+      rd.contact?.phone,
+      rd.contact?.email,
+      rd.contact?.dateOfBirth ? `DOB: ${rd.contact.dateOfBirth}` : "",
     ].filter(Boolean) as string[];
     if (contactLines.length) {
       sidebarChildren.push(new Paragraph({
@@ -120,13 +120,13 @@ export async function exportResumeDOCXRenderDoc(
     }
 
     // --- Sidebar: skills / languages / certifications (white styling) ---
-    for (const section of rd.sections) {
-      if (!DOCX_SIDEBAR_SECTION_TYPES.has(section.type)) continue;
+    for (const section of rd.sections || []) {
+      if (section.type === "header" || !DOCX_SIDEBAR_SECTION_TYPES.has(section.type)) continue;
       sidebarChildren.push(new Paragraph({
         spacing: { before: 160, after: 60 },
-        children: [new TextRun({ text: section.title.toUpperCase(), bold: true, size: (L.sectionTitleSizePt || 11) * 2, font: L.fontFamily, color: white })],
+        children: [new TextRun({ text: (section.title || "").toUpperCase(), bold: true, size: (L.sectionTitleSizePt || 11) * 2, font: L.fontFamily, color: white })],
       }));
-      for (const item of section.items) {
+      for (const item of section.items || []) {
         renderSidebarContentItem(item, sidebarChildren, L, white);
       }
     }
@@ -135,14 +135,14 @@ export async function exportResumeDOCXRenderDoc(
     const mainAddSection = (title: string) => {
       mainChildren.push(new Paragraph({
         spacing: { before: 120, after: 30, line: 240 },
-        children: [new TextRun({ text: title, bold: true, size: (L.sectionTitleSizePt || 11.5) * 2, font: L.fontFamily, color: accentHex })],
+        children: [new TextRun({ text: (title || "").toUpperCase(), bold: true, size: (L.sectionTitleSizePt || 11.5) * 2, font: L.fontFamily, color: accentHex })],
       }));
     };
-    for (const section of rd.sections) {
-      if (DOCX_SIDEBAR_SECTION_TYPES.has(section.type)) continue;
-      mainAddSection(section.title);
+    for (const section of rd.sections || []) {
+      if (section.type === "header" || DOCX_SIDEBAR_SECTION_TYPES.has(section.type)) continue;
+      mainAddSection(section.title || "");
       const sectionAlign = resolveSectionAlignment(L, section.type);
-      for (const item of section.items) {
+      for (const item of section.items || []) {
         renderContentItem(item, mainChildren, L, bodyHex, docxTabStops, sectionAlign);
       }
     }
@@ -197,11 +197,11 @@ export async function exportResumeDOCXRenderDoc(
   children.push(new Paragraph({
     alignment: AlignmentType.LEFT,
     spacing: { after: 40 },
-    children: [new TextRun({ text: (rd.contact.name || "YOUR NAME").toUpperCase(), bold: true, size: L.nameSizePt * 2, font: L.fontFamily, color: nameHex })],
+    children: [new TextRun({ text: (rd.contact?.name || "YOUR NAME").toUpperCase(), bold: true, size: L.nameSizePt * 2, font: L.fontFamily, color: nameHex })],
   }));
 
   // Headline
-  if (rd.contact.headline) {
+  if (rd.contact?.headline) {
     children.push(new Paragraph({
       spacing: { after: 60 },
       children: [new TextRun({ text: rd.contact.headline, size: L.bodyFontSizePt * 2, font: L.fontFamily, color: bodyHex })],
@@ -211,10 +211,10 @@ export async function exportResumeDOCXRenderDoc(
   // Contact block styling (stacked vs single-line)
   if (L.contactSpacing === "single-line") {
     const contactParts: string[] = [];
-    if (rd.contact.location) contactParts.push(rd.contact.location);
-    if (rd.contact.phone) contactParts.push(rd.contact.phone);
-    if (rd.contact.email) contactParts.push(rd.contact.email);
-    if (rd.contact.dateOfBirth) contactParts.push(`DOB: ${rd.contact.dateOfBirth}`);
+    if (rd.contact?.location) contactParts.push(rd.contact.location);
+    if (rd.contact?.phone) contactParts.push(rd.contact.phone);
+    if (rd.contact?.email) contactParts.push(rd.contact.email);
+    if (rd.contact?.dateOfBirth) contactParts.push(`DOB: ${rd.contact.dateOfBirth}`);
 
     if (contactParts.length) {
       children.push(new Paragraph({
@@ -224,15 +224,15 @@ export async function exportResumeDOCXRenderDoc(
     }
   } else {
     const locPhoneParts: string[] = [];
-    if (rd.contact.location) locPhoneParts.push(rd.contact.location);
-    if (rd.contact.phone) locPhoneParts.push(rd.contact.phone);
+    if (rd.contact?.location) locPhoneParts.push(rd.contact.location);
+    if (rd.contact?.phone) locPhoneParts.push(rd.contact.phone);
     if (locPhoneParts.length) {
       children.push(new Paragraph({
         spacing: { after: 40 },
         children: [new TextRun({ text: locPhoneParts.join(" | "), size: L.bodyFontSizePt * 2, font: L.fontFamily, color: contactHex })],
       }));
     }
-    if (rd.contact.email) {
+    if (rd.contact?.email) {
       children.push(new Paragraph({
         spacing: { after: 60 },
         children: [new TextRun({ text: rd.contact.email, size: L.bodyFontSizePt * 2, font: L.fontFamily, color: contactHex })],
@@ -240,7 +240,7 @@ export async function exportResumeDOCXRenderDoc(
     }
 
     // Date of birth — single line
-    if (rd.contact.dateOfBirth) {
+    if (rd.contact?.dateOfBirth) {
       children.push(new Paragraph({
         spacing: { after: 60 },
         children: [new TextRun({ text: `Date Of Birth: ${rd.contact.dateOfBirth}`, size: L.bodyFontSizePt * 2, font: L.fontFamily, color: bodyHex })],
@@ -252,16 +252,17 @@ export async function exportResumeDOCXRenderDoc(
   const addSection = (title: string) => {
     children.push(new Paragraph({
       spacing: { before: 120, after: 30, line: 240 },
-      children: [new TextRun({ text: title, bold: true, size: (L.sectionTitleSizePt || 11.5) * 2, font: L.fontFamily, color: accentHex })],
+      children: [new TextRun({ text: (title || "").toUpperCase(), bold: true, size: (L.sectionTitleSizePt || 11.5) * 2, font: L.fontFamily, color: accentHex })],
     }));
   };
 
   // ===== RENDER SECTIONS from RenderDocument =====
-  for (const section of rd.sections) {
-    addSection(section.title);
+  for (const section of rd.sections || []) {
+    if (section.type === "header") continue;
+    addSection(section.title || "");
     const sectionAlign = resolveSectionAlignment(L, section.type);
 
-    for (const item of section.items) {
+    for (const item of section.items || []) {
       renderContentItem(item, children, L, bodyHex, docxTabStops, sectionAlign);
     }
   }
@@ -437,7 +438,7 @@ function renderSidebarContentItem(
       for (const b of item.bullets) {
         children.push(new Paragraph({
           spacing: { after: 20 },
-          children: parseMarkdownToTextRuns(`\u2022 ${b.replace(/^[\u2022\u25CF\u2023\u2043\u2219\u00B7*\-\s]+/, "")}`, {
+          children: parseMarkdownToTextRuns(`\u2022 ${String(b || "").replace(/^[\u2022\u25CF\u2023\u2043\u2219\u00B7*\-\s]+/, "")}`, {
             size: L.bodyFontSizePt * 2,
             font: L.fontFamily,
             color: whiteHex,

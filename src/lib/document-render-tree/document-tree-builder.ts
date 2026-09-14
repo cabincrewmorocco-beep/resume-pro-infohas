@@ -164,7 +164,7 @@ export function buildDocumentTree(
     }
 
     // Section title
-    allNodes.push(makeNode("section-title", section.title.toUpperCase(), null, {
+    allNodes.push(makeNode("section-title", (section.title || "").toUpperCase(), null, {
       fontSizePt: theme.sectionTitleSizePt,
       bold: true,
       color: theme.sectionTitleColor,
@@ -175,7 +175,7 @@ export function buildDocumentTree(
 
     // Section content via renderer
     const renderData: SectionRenderData = {
-      title: section.title,
+      title: section.title || "",
       items: mapSectionItems(section.items, theme),
       sectionType: section.type,
     };

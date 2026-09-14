@@ -1496,7 +1496,7 @@ export class ProviderRouter {
       id: uid("pl"),
       createdAt: new Date().toISOString(),
       ...entry,
-    });
+    } as any);
   }
 }
 
@@ -1726,13 +1726,18 @@ export function isAvailableForSelection(
   const excluded = excludeIds?.some((eid) =>
     pid === eid || p.id === eid || p.name === eid || p.type === eid
   );
+  const emergencyId = p.id || p.type;
+  const isPuter = p.type === "puter" || p.id === "p_puter" || p.id === "puter";
+  const isCooledDown =
+    isProviderInCooldown(emergencyId) ||
+    isProviderInCooldown(p.id) ||
+    (isPuter && (isProviderInCooldown("p_puter") || isProviderInCooldown("puter"))) ||
+    (p.health?.rateLimitedUntil && new Date(p.health.rateLimitedUntil).getTime() > Date.now());
+
   if (opts?.allowEmergency === true) {
     // Explicit agent route / emergency rescue: emergency-only providers
-    // (Puter) are ALLOWED here — circuit-breaker evidence still applies so a
-    // tripped puter is not hammered.
-    const emergencyId = p.id || p.type;
-    const circuitOk =
-      EMERGENCY_ONLY_PROVIDERS.has(emergencyId) || isProviderAvailable(emergencyId);
+    // (Puter) are ALLOWED here — but circuit-breaker and cooldown evidence STILL apply!
+    const circuitOk = isProviderAvailable(emergencyId) && isProviderAvailable(p.id) && !isCooledDown;
     return (
       p.isActive &&
       p.type !== "local" &&
@@ -1748,6 +1753,7 @@ export function isAvailableForSelection(
     !EMERGENCY_ONLY_PROVIDERS.has(p.type) &&
     !shouldSkipForOptimization(p.id) &&
     !shouldSkipForOptimization(p.type) &&
+    !isCooledDown &&
     hasValidApiKey(p) &&
     !excluded
   );
@@ -1837,7 +1843,13 @@ export async function selectProviderForAgent(
 
   eligible = eligible.sort((a: any, b: any) => (a.priority ?? 50) - (b.priority ?? 50));
 
-  if (eligible.length > 0) return eligible[0];
+  if (eligible.length > 0) {
+    if (settings?.defaultProviderId) {
+      const def = eligible.find((p: any) => p.id === settings.defaultProviderId);
+      if (def) return def;
+    }
+    return eligible[0];
+  }
 
   // EMERGENCY RESCUE — fail-safe: never return "no provider" while Puter is
   // alive. The emergency-only designation exists to RESERVE Puter for exactly

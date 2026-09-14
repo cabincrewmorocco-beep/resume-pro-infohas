@@ -2518,7 +2518,7 @@ export function Integrations() {
     if (!resume) { toast.error("Create a resume first"); return; }
     const blob = new Blob([JSON.stringify(resume, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `${resume.name.replace(/\s+/g, "_")}_backup.json`; a.click();
+    const a = document.createElement("a"); a.href = url; a.download = `${String(resume?.name || "resume").replace(/\s+/g, "_")}_backup.json`; a.click();
     URL.revokeObjectURL(url);
     toast.success("Resume backup downloaded — upload to Google Drive");
   };
@@ -2528,7 +2528,7 @@ export function Integrations() {
     const text = `# ${resume.name}\n${resume.headline ? `**${resume.headline}**\n` : ""}\n${resume.contact.email ? `Email: ${resume.contact.email} | ` : ""}${resume.contact.phone ? `Phone: ${resume.contact.phone}` : ""}\n\n## Summary\n${resume.summary || ""}\n\n## Experience\n${resume.experience.map((e) => `### ${e.title} — ${e.company}\n_${e.startDate} - ${e.endDate}_\n\n${e.bullets.map((b) => `- ${b}`).join("\n")}`).join("\n\n")}\n\n## Education\n${resume.education.map((ed) => `### ${ed.degree} — ${ed.institution}\n_${ed.startDate} - ${ed.endDate}_`).join("\n\n")}\n\n## Skills\n${resume.skills.map((s) => `- ${s.name}`).join("\n")}`;
     const blob = new Blob([text], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `${resume.name.replace(/\s+/g, "_")}_resume.md`; a.click();
+    const a = document.createElement("a"); a.href = url; a.download = `${String(resume?.name || "resume").replace(/\s+/g, "_")}_resume.md`; a.click();
     URL.revokeObjectURL(url);
     toast.success("Markdown resume downloaded!");
   };

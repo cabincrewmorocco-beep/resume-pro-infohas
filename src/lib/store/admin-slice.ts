@@ -214,15 +214,14 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
       p.requiresApiKey = false;
       p.status = "healthy";
       p.allowedForRegularUsers = true;
-      if (!p.modelName || p.modelName.includes("1.5") || p.modelName.includes("2.0")) {
-        p.modelName = "gemini-2.5-flash";
+      if (!p.modelName || p.modelName.includes("1.5") || p.modelName.includes("2.0") || p.modelName === "gemini-3.5-flash-lite") {
+        p.modelName = "gemini-3.8-flash";
       }
       p.enabledModels = [
-        "gemini-2.5-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
         "gemini-3.8-flash",
+        "gemini-flash-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
         "gemini-3.1-pro-preview",
       ];
     }

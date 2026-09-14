@@ -555,7 +555,7 @@ Rules:
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           source: "ai-optimized",
-          fileName: `${resume.name.replace(/\s+/g, "_")}_optimized.pdf`,
+          fileName: `${String(resume?.name || "resume").replace(/\s+/g, "_")}_optimized.pdf`,
         };
         addResume(optimized);
         toast.success(`Optimized resume created — "${optimized.name} (Optimized)" added to your library.`);

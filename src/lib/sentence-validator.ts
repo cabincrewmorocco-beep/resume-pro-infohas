@@ -26,6 +26,7 @@ export function validateResumeSentenceCompleteness(resume: ResumeData): Sentence
     cleaned.experience.forEach((exp, eIdx) => {
       if (exp.bullets) {
         exp.bullets = exp.bullets.map((b, bIdx) => {
+          if (!b || typeof b !== "string") return b || "";
           if (HANGING_ENDINGS.test(b.trim())) {
             issues.push(`Bullet ${bIdx} in experience ${eIdx} ended abruptly.`);
             let fixed = b.trim().replace(HANGING_ENDINGS, "").trim();

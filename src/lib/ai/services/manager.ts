@@ -260,6 +260,9 @@ export class ProviderManager {
                 response: text,
                 rateLimited: false,
               };
+            } else {
+              // Upstream rejected the direct client request (e.g. 400, 401, 403, 404, 429)
+              rememberBlockedProbeHost(probeStorage, probeHost || "");
             }
           } catch {
             // Direct fetch failed (CORS or network) — remember the host so the

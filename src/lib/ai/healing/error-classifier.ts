@@ -36,9 +36,9 @@ export interface FailureClassification {
   apiVersionMismatch: boolean;
 }
 
-const RATE_LIMIT = /429|rate.?limit|too.?many.?requests|FreeUsageLimitError|quota|usage.?limit/i;
-const QUOTA_EXHAUSTION = /FreeUsageLimitError|usage.?limit|quota.?exceeded|daily|monthly/i;
-const AUTH = /401|403|unauthorized|unauthorised|forbidden|invalid.?api.?key|incorrect.?api.?key|authentication|auth.?fail|insufficient.?credits|credit.?balance|billing/i;
+const RATE_LIMIT = /429|rate.?limit|too.?many.?requests|FreeUsageLimitError|quota|usage.?limit|low balance|not enough funding|funding|no usage left|upgrade to continue|please upgrade/i;
+const QUOTA_EXHAUSTION = /FreeUsageLimitError|usage.?limit|quota.?exceeded|daily|monthly|low balance|not enough funding|funding|no usage left|upgrade to continue|please upgrade|insufficient.?credits|insufficient.?funds/i;
+const AUTH = /401|403|402|unauthorized|unauthorised|forbidden|invalid.?api.?key|incorrect.?api.?key|authentication|auth.?fail|insufficient.?credits|credit.?balance|billing|low balance|not enough funding|funding|no usage left|upgrade to continue|please upgrade/i;
 // "model(s) <any id up to 60 chars> not found / does not exist / not supported"
 // — the bounded gap lets a specific model id (e.g. `hy3-free`) sit between.
 const MODEL_ERR = /model[s]?[\s`"'/.\w-]{0,60}?(?:not.?found|does.?not.?exist|is.?not.?supported|unsupported|error\b)|not.?found.?for.?api.?version|invalid.?model|decommissioned/i;

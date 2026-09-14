@@ -27,6 +27,7 @@ const A4_H = 297;
 const SIDEBAR_TEMPLATES = new Set(["modern", "creative"]);
 
 function hexToRgb(hex: string): [number, number, number] {
+  if (!hex || typeof hex !== "string") return [0, 0, 0];
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
     ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)]
@@ -102,15 +103,17 @@ export async function exportResumePDFRenderDoc(
     const fontName = getPdfFont(L.fontFamily || "Times New Roman");
 
     const sectionHeader = (title: string) => {
+      const safeTitle = (title || "").toUpperCase();
+      if (!safeTitle) return;
       doc.setFont(fontName, "bold");
       doc.setFontSize(currentSectionTitleSize);
       doc.setTextColor(sectionRgb[0], sectionRgb[1], sectionRgb[2]);
-      doc.text(title.toUpperCase(), left, textY(currentSectionTitleSize));
+      doc.text(safeTitle, left, textY(currentSectionTitleSize));
       advanceMm(ptToMm(currentSectionTitleSize) * 0.8 + 1.0);
     };
 
     const drawWrapped = (text: string, w: number, align: TextAlignment = "justify") => {
-      text = (text || "")
+      text = String(text || "")
         .replace(/\*\*|\*/g, "")
         .replace(/^%Ï\s*/g, "")
         .replace(/%Ï/g, " ")
@@ -139,7 +142,7 @@ export async function exportResumePDFRenderDoc(
     };
 
     const drawBulletLine = (text: string, w: number, indent = 0, align: TextAlignment = "justify") => {
-      text = (text || "")
+      text = String(text || "")
         .replace(/\*\*|\*/g, "")
         .replace(/^%Ï\s*/g, "")
         .replace(/%Ï/g, " ")
@@ -197,11 +200,11 @@ export async function exportResumePDFRenderDoc(
     doc.setFont(fontName, "bold");
     doc.setFontSize(currentNameSize);
     doc.setTextColor(nameRgb[0], nameRgb[1], nameRgb[2]);
-    doc.text((rd.contact.name || "YOUR NAME").toUpperCase(), left, textY(currentNameSize));
+    doc.text((rd.contact?.name || "YOUR NAME").toUpperCase(), left, textY(currentNameSize));
     advanceMm(ptToMm(currentNameSize) * 0.8 + 1.0);
     // (single-column flow continues below — unchanged for non-sidebar templates)
 
-    if (rd.contact.headline) {
+    if (rd.contact?.headline) {
       doc.setFont(fontName, "normal");
       doc.setFontSize(currentBodyFontSize);
       doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
@@ -213,10 +216,10 @@ export async function exportResumePDFRenderDoc(
     // Contact block styling (stacked vs single-line)
     if (L.contactSpacing === "single-line") {
       const contactParts = [
-        rd.contact.location,
-        rd.contact.phone,
-        rd.contact.email,
-        rd.contact.dateOfBirth ? `DOB: ${rd.contact.dateOfBirth}` : ""
+        rd.contact?.location,
+        rd.contact?.phone,
+        rd.contact?.email,
+        rd.contact?.dateOfBirth ? `DOB: ${rd.contact.dateOfBirth}` : ""
       ].filter(Boolean);
       if (contactParts.length) {
         const contactRgb = hexToRgb(L.contactColor || L.bodyTextColor);
@@ -229,7 +232,7 @@ export async function exportResumePDFRenderDoc(
         advanceLine();
       }
     } else {
-      const locPhone = [rd.contact.location, rd.contact.phone].filter(Boolean);
+      const locPhone = [rd.contact?.location, rd.contact?.phone].filter(Boolean);
       if (locPhone.length) {
         const contactRgb = hexToRgb(L.contactColor || L.bodyTextColor);
         doc.setTextColor(contactRgb[0], contactRgb[1], contactRgb[2]);
@@ -238,7 +241,7 @@ export async function exportResumePDFRenderDoc(
         doc.text(locPhone.join(" | "), left, textY(currentBodyFontSize));
         advanceLine();
       }
-      if (rd.contact.email) {
+      if (rd.contact?.email) {
         const contactRgb = hexToRgb(L.contactColor || L.bodyTextColor);
         doc.setTextColor(contactRgb[0], contactRgb[1], contactRgb[2]);
         doc.setFont(fontName, "normal");
@@ -247,7 +250,7 @@ export async function exportResumePDFRenderDoc(
         advanceLine();
       }
 
-      if (rd.contact.dateOfBirth) {
+      if (rd.contact?.dateOfBirth) {
         doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
         doc.setFont(fontName, "normal");
         doc.setFontSize(currentBodyFontSize);
@@ -264,18 +267,17 @@ export async function exportResumePDFRenderDoc(
 
     advanceMm(1.5);
 
-
-
     // Render sections
-    for (const section of rd.sections) {
+    for (const section of rd.sections || []) {
+      if (section.type === "header") continue;
       if (y > maxY - 20) {
         hasTruncated = true;
         break;
       }
-      sectionHeader(section.title);
+      sectionHeader(section.title || "");
       const sectionAlign = resolveSectionAlignment(L, section.type);
 
-      for (const item of section.items) {
+      for (const item of section.items || []) {
         if (y > maxY - 10) {
           hasTruncated = true;
           break;
@@ -441,7 +443,7 @@ export async function exportResumePDFRenderDoc(
   }
 
   // Save the final scaled document
-  const fname = (rd.contact.name || "resume").replace(/\s+/g, "_") + "_resume.pdf";
+  const fname = String(rd.contact?.name || "resume").replace(/\s+/g, "_") + "_resume.pdf";
   finalDoc.save(fname);
 
   return { ok: !finalTruncated, pages: finalPages };
@@ -497,10 +499,12 @@ function renderSidebarTemplate(
   // ══ SIDEBAR COLUMN ══
   let sy = Math.max(L.marginTopMm, 10);
   const sHeading = (title: string) => {
+    const safeTitle = (title || "").toUpperCase();
+    if (!safeTitle) return;
     doc.setFont(fontName, "bold");
     doc.setFontSize(Math.max(8.5 * scale, 7));
     doc.setTextColor(255, 255, 255);
-    doc.text(title.toUpperCase(), SIDEBAR_PAD_L, textY(sy, 8.5));
+    doc.text(safeTitle, SIDEBAR_PAD_L, textY(sy, 8.5));
     sy += ptToMm(8.5) * 0.85 + 1.4;
     doc.setDrawColor(255, 255, 255);
     doc.setLineWidth(0.25);
@@ -522,13 +526,13 @@ function renderSidebarTemplate(
   doc.setFont(fontName, "bold");
   doc.setFontSize(currentNameSize);
   doc.setTextColor(255, 255, 255);
-  const nameLines = doc.splitTextToSize((rd.contact.name || "YOUR NAME").toUpperCase(), sidebarTextW);
+  const nameLines = doc.splitTextToSize((rd.contact?.name || "YOUR NAME").toUpperCase(), sidebarTextW);
   for (const line of nameLines) {
     if (sy > maxY) { truncated = true; break; }
     doc.text(line, SIDEBAR_PAD_L, textY(sy, currentNameSize));
     sy += ptToMm(currentNameSize) * 0.95;
   }
-  if (rd.contact.headline) {
+  if (rd.contact?.headline) {
     sy += 1.2;
     sLine(rd.contact.headline);
   }
@@ -536,10 +540,10 @@ function renderSidebarTemplate(
 
   // Contact
   const contactLines = [
-    rd.contact.location,
-    rd.contact.phone,
-    rd.contact.email,
-    rd.contact.dateOfBirth ? `DOB: ${rd.contact.dateOfBirth}` : "",
+    rd.contact?.location,
+    rd.contact?.phone,
+    rd.contact?.email,
+    rd.contact?.dateOfBirth ? `DOB: ${rd.contact.dateOfBirth}` : "",
   ].filter(Boolean) as string[];
   if (contactLines.length) {
     sHeading("Contact");
@@ -552,11 +556,11 @@ function renderSidebarTemplate(
   }
 
   // Sidebar sections (skills / languages / certifications) — white styling
-  for (const section of rd.sections) {
-    if (!SIDEBAR_SECTION_TYPES.has(section.type)) continue;
+  for (const section of rd.sections || []) {
+    if (section.type === "header" || !SIDEBAR_SECTION_TYPES.has(section.type)) continue;
     if (sy > maxY) { truncated = true; break; }
-    sHeading(section.title);
-    renderItems(doc, section.items, {
+    sHeading(section.title || "");
+    renderItems(doc, section.items || [], {
       x: SIDEBAR_PAD_L,
       width: sidebarTextW,
       bulletIndent: 3.5,
@@ -578,10 +582,12 @@ function renderSidebarTemplate(
   // ══ MAIN COLUMN ══
   let y = Math.max(L.marginTopMm, 10);
   const mSectionHeader = (title: string) => {
+    const safeTitle = (title || "").toUpperCase();
+    if (!safeTitle) return;
     doc.setFont(fontName, "bold");
     doc.setFontSize(currentSectionTitleSize);
     doc.setTextColor(accent[0], accent[1], accent[2]);
-    doc.text(title.toUpperCase(), mainLeft, textY(y, currentSectionTitleSize));
+    doc.text(safeTitle, mainLeft, textY(y, currentSectionTitleSize));
     y += ptToMm(currentSectionTitleSize) * 0.85 + 0.8;
     doc.setDrawColor(accent[0], accent[1], accent[2]);
     doc.setLineWidth(0.35);
@@ -589,11 +595,11 @@ function renderSidebarTemplate(
     y += 1.6;
   };
 
-  for (const section of rd.sections) {
-    if (SIDEBAR_SECTION_TYPES.has(section.type)) continue;
+  for (const section of rd.sections || []) {
+    if (section.type === "header" || SIDEBAR_SECTION_TYPES.has(section.type)) continue;
     if (y > maxY - 20) { truncated = true; break; }
-    mSectionHeader(section.title);
-    renderItems(doc, section.items, {
+    mSectionHeader(section.title || "");
+    renderItems(doc, section.items || [], {
       x: mainLeft,
       width: mainW,
       bulletIndent: L.bulletIndentMm ?? 6.4,
@@ -743,7 +749,7 @@ function renderItems(doc: jsPDF, items: RenderContentItem[], ctx: ItemRenderCtx)
 }
 
 function cleanText(text: string): string {
-  return (text || "")
+  return String(text || "")
     .replace(/\*\*|\*/g, "")
     .replace(/^%Ï\s*/g, "")
     .replace(/%Ï/g, " ")
@@ -752,7 +758,7 @@ function cleanText(text: string): string {
 }
 
 function getPdfFontFamily(family: string): string {
-  const f = family.toLowerCase();
+  const f = String(family || "").toLowerCase();
   if (f.includes("helvetica") || f.includes("arial") || f.includes("sans-serif") || f.includes("inter")) {
     return "helvetica";
   }

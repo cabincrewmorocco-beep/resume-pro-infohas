@@ -282,31 +282,32 @@ export function stripLeaks(text: string): { cleaned: string; repairs: string[] }
  * and should never appear in job titles, company names, or section headers.
  */
 export function stripPipesFromResume(resume: ResumeData): ResumeData {
-  const clean = (text: string | undefined | null): string => (text || "").replace(/\|/g, "·");
+  const clean = (text: string | undefined | null): string =>
+    typeof text === "string" ? text.replace(/\|/g, "·") : (text ? String(text).replace(/\|/g, "·") : "");
   return {
     ...resume,
     summary: clean(resume.summary || ""),
     headline: clean(resume.headline || ""),
-    experience: resume.experience.map((e) => ({
+    experience: (resume.experience || []).map((e) => ({
       ...e,
       title: clean(e.title),
       company: clean(e.company),
       location: clean(e.location),
-      bullets: e.bullets.map((b) => clean(b)),
+      bullets: (e.bullets || []).map((b) => clean(b)),
     })),
-    skills: resume.skills.map((s) => ({
+    skills: (resume.skills || []).map((s) => ({
       ...s,
       name: clean(s.name),
       category: s.category ? clean(s.category) : undefined,
     })),
-    education: resume.education.map((ed) => ({
+    education: (resume.education || []).map((ed) => ({
       ...ed,
       degree: clean(ed.degree),
       institution: clean(ed.institution),
       location: clean(ed.location),
       highlights: ed.highlights?.map((h) => clean(h)),
     })),
-    languages: resume.languages.map((l) => ({
+    languages: (resume.languages || []).map((l) => ({
       ...l,
       name: clean(l.name),
       proficiency: clean(l.proficiency) as ResumeLanguage["proficiency"],
@@ -598,10 +599,10 @@ export function validateResumeForExport(resume: ResumeData): {
     resume.name,
     resume.headline,
     resume.summary,
-    ...resume.experience.flatMap((e) => [e.title, e.company, ...e.bullets]),
-    ...resume.skills.map((s) => s.name),
-    ...resume.education.flatMap((ed) => [ed.degree, ed.institution, ...(ed.highlights || [])]),
-    ...resume.languages.map((l) => `${l.name} ${l.proficiency}`),
+    ...(resume.experience || []).flatMap((e) => [e.title, e.company, ...(e.bullets || [])]),
+    ...(resume.skills || []).map((s) => s.name),
+    ...(resume.education || []).flatMap((ed) => [ed.degree, ed.institution, ...(ed.highlights || [])]),
+    ...(resume.languages || []).map((l) => `${l.name} ${l.proficiency}`),
     resume.additionalInfo,
     ...(resume.dynamicSections || []).flatMap((ds) => [ds.title, ds.content, ...(ds.bullets || [])]),
   ].filter(Boolean).join(" ");
@@ -633,7 +634,7 @@ export function validateResumeForExport(resume: ResumeData): {
  */
 function stripLeaksFromResume(resume: ResumeData): ResumeData | null {
   const clean = (text: string | undefined | null): string => {
-    if (!text) return "";
+    if (!text || typeof text !== "string") return typeof text === "string" ? text : "";
     let cleaned = text;
     for (const pattern of LEAK_PATTERNS) {
       cleaned = cleaned.replace(pattern, "");
@@ -644,24 +645,24 @@ function stripLeaksFromResume(resume: ResumeData): ResumeData | null {
   const cleaned: ResumeData = {
     ...resume,
     summary: clean(resume.summary || ""),
-    experience: resume.experience.map((e) => ({
+    experience: (resume.experience || []).map((e) => ({
       ...e,
       title: clean(e.title),
       company: clean(e.company),
-      bullets: e.bullets.map(clean).filter((b) => b.length > 0),
+      bullets: (e.bullets || []).map(clean).filter((b) => b.length > 0),
     })),
-    skills: resume.skills.map((s) => ({
+    skills: (resume.skills || []).map((s) => ({
       ...s,
       name: clean(s.name),
       category: s.category ? clean(s.category) : undefined,
     })).filter((s) => s.name.length > 0),
-    education: resume.education.map((ed) => ({
+    education: (resume.education || []).map((ed) => ({
       ...ed,
       degree: clean(ed.degree),
       institution: clean(ed.institution),
       highlights: ed.highlights?.map(clean).filter((h) => h.length > 0),
     })),
-    languages: resume.languages.map((l) => ({
+    languages: (resume.languages || []).map((l) => ({
       ...l,
       name: clean(l.name),
       proficiency: clean(l.proficiency) as ResumeLanguage["proficiency"],
@@ -677,7 +678,7 @@ function stripLeaksFromResume(resume: ResumeData): ResumeData | null {
 
   // If summary is too short after cleaning, the resume is unsalvageable
   if (!cleaned.summary || cleaned.summary.length < 30) return null;
-  if (cleaned.experience.length === 0) return null;
+  if ((cleaned.experience || []).length === 0) return null;
 
   return cleaned;
 }
@@ -783,7 +784,7 @@ const FILLER_PHRASES = [
  * - Sentences ending with comma instead of period
  */
 export function cleanupGrammar(text: string): string {
-  if (!text) return text;
+  if (!text || typeof text !== "string") return typeof text === "string" ? text : "";
   let result = text;
 
   // Strip stray backticks (often leak from markdown code fences)
@@ -854,7 +855,7 @@ export function cleanupGrammar(text: string): string {
  * and the optimization became unrecoverable.
  */
 export function cleanupNameField(text: string): string {
-  if (!text) return text;
+  if (!text || typeof text !== "string") return typeof text === "string" ? text : "";
   let result = text;
 
   // Strip stray backticks (often leak from markdown code fences)
@@ -891,7 +892,7 @@ export function cleanupResumeGrammar<T>(data: T): T {
 
   // Helper: strip date patterns from a field (e.g., "INFOHAS 2023 – 2025" → "INFOHAS")
   const stripDates = (text: string): string => {
-    if (!text) return text;
+    if (!text || typeof text !== "string") return typeof text === "string" ? text : "";
     return text
       // Remove "2023 – 2025", "2023-2025", "2023 – Present", "Jan 2020 – Mar 2022"
       .replace(/\s+\d{4}\s*[–\-—]\s*(?:\d{4}|Present|Current)\s*/gi, " ")

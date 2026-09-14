@@ -218,9 +218,9 @@ export function validateForExport(
   // Check for duplicated dynamic sections (same normalized title)
   const dynTitleSeen = new Set<string>();
   for (const ds of resume.dynamicSections || []) {
-    const key = ds.normalizedTitle || ds.title.toLowerCase();
+    const key = ds.normalizedTitle || String(ds.title || "").toLowerCase();
     if (dynTitleSeen.has(key)) {
-      warnings.push(`Duplicate dynamic section: "${ds.title}"`);
+      warnings.push(`Duplicate dynamic section: "${ds.title || "Untitled"}"`);
     }
     dynTitleSeen.add(key);
   }
@@ -228,7 +228,8 @@ export function validateForExport(
   // Check for duplicate contact info (same email or phone appearing in multiple fields)
   if (resume.contact?.email && resume.contact?.phone) {
     const contactText = resumeText;
-    const emailCount = (contactText.match(new RegExp(resume.contact.email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')) || []).length;
+    const emailStr = String(resume.contact.email || "");
+    const emailCount = emailStr ? (contactText.match(new RegExp(emailStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')) || []).length : 0;
     if (emailCount > 2) {
       warnings.push(`Contact email appears ${emailCount} times — possible header duplication`);
     }

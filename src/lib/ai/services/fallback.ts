@@ -2,6 +2,8 @@
 // Considers: retry policy, rate limits, current health, fallback chain order.
 import type { AIProvider, AIProviderSettings, AIProviderLog } from "../../types";
 import type { ProviderConfig } from "../providers/interface";
+import { isProviderInCooldown } from "../../provider-cooldown";
+import { isBillingError } from "../../token-rotation";
 
 export interface RoutingDecision {
   provider: AIProvider;
@@ -24,7 +26,14 @@ export class FallbackManager {
     const chain: AIProvider[] = [];
     const seen = new Set<string>();
 
-    // 1. Default provider first
+    // Helper: is provider currently blocked by cooldown or rate-limited
+    const isCooledDown = (p: AIProvider) => {
+      if (isProviderInCooldown(p.id)) return true;
+      if (p.health?.rateLimitedUntil && new Date(p.health.rateLimitedUntil).getTime() > Date.now()) return true;
+      return false;
+    };
+
+    // 1. Default provider first (even if in cooldown, keep as attempt #1 so user's explicit choice is tried or quickly failed)
     if (settings.defaultProviderId) {
       const def = active.find((p) => p.id === settings.defaultProviderId);
       if (def) {
@@ -42,12 +51,24 @@ export class FallbackManager {
       }
     }
 
-    // 3. Other active providers by priority (excluding "down")
+    // 3. Other active providers by priority (deprioritize / exclude cooled down ones)
+    const healthyOthers: AIProvider[] = [];
+    const cooledDownOthers: AIProvider[] = [];
+
     for (const p of active.sort((a, b) => a.priority - b.priority)) {
       if (!seen.has(p.id) && p.status !== "down") {
-        chain.push(p);
-        seen.add(p.id);
+        if (isCooledDown(p)) {
+          cooledDownOthers.push(p);
+        } else {
+          healthyOthers.push(p);
+        }
       }
+    }
+
+    // Append healthy alternatives first, and cooled-down as last resort
+    for (const p of [...healthyOthers, ...cooledDownOthers]) {
+      chain.push(p);
+      seen.add(p.id);
     }
 
     return chain;
@@ -64,6 +85,10 @@ export class FallbackManager {
     const maxAttempts = settings.retryAttempts ?? 2;
     if (attempt >= maxAttempts) {
       return { retry: false, reason: "Max retry attempts reached" };
+    }
+    // Billing / 402 / Quota exhaustion / Low Balance → never retry on same provider, failover immediately
+    if (isBillingError(error)) {
+      return { retry: false, reason: "Billing/funding/quota limit — immediately switching to fallback provider" };
     }
     // 429 rate-limited → don't retry on same provider, move to next
     if (error?.statusCode === 429) {

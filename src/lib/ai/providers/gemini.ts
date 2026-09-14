@@ -51,11 +51,11 @@ export class GeminiProvider extends OpenAICompatibleProvider {
     return super.chat(
       {
         ...req,
-        model: req.model || config.modelName || "gemini-2.5-flash",
+        model: req.model || config.modelName || "gemini-3.8-flash",
       },
       {
         ...config,
-        modelName: config.modelName || "gemini-2.5-flash",
+        modelName: config.modelName || "gemini-3.8-flash",
         baseUrl: config.baseUrl || "https://generativelanguage.googleapis.com/v1beta/openai",
       }
     );
@@ -82,11 +82,10 @@ export class GeminiProvider extends OpenAICompatibleProvider {
       }
     } catch {}
     return [
-      "gemini-2.5-flash",
-      "gemini-3.6-flash",
-      "gemini-3.5-flash",
-      "gemini-3.5-flash-lite",
       "gemini-3.8-flash",
+      "gemini-flash-latest",
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash",
       "gemini-3.1-pro-preview",
     ];
   }
