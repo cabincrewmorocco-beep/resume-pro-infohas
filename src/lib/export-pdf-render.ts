@@ -4,7 +4,9 @@
  * Consumes RenderDocument (single source of truth) and produces a PDF
  * that matches the DOCX output. NOT an independent renderer.
  */
-import jsPDF from "jspdf";
+import { jsPDF as JsPdfClass } from "jspdf";
+import * as jspdfModule from "jspdf";
+const jsPDF: typeof JsPdfClass = (jspdfModule as any).jsPDF || (jspdfModule as any).default || JsPdfClass || (jspdfModule as any);
 import type {
   RenderDocument,
   RenderContentItem,

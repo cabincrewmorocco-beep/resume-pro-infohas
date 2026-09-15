@@ -10,7 +10,8 @@ import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   TabStopType, TabStopPosition, convertInchesToTwip,
 } from "docx";
-import { saveAs } from "file-saver";
+import FileSaver from "file-saver";
+const saveAs = (FileSaver as any)?.saveAs || FileSaver;
 import type { ResumeData, CoverLetter, InterviewPackage, ResumeLayoutModel, TextAlignment } from "./types";
 import { SEED_OPTIMIZER_DIRECTIVE } from "./mock-data";
 import { getDocxHtml, resumeToDirectiveHtml } from "./ats-directives";
