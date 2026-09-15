@@ -18,6 +18,8 @@ export function AuthModal() {
   const close = useApp((s) => s.closeAuth);
   const signIn = useApp((s) => s.signIn);
   const signInWithEmail = useApp((s) => s.signInWithEmail);
+  const signInWithGoogle = useApp((s) => s.signInWithGoogle);
+  const signInAsGuest = useApp((s) => s.signInAsGuest);
   const registerWithEmail = useApp((s) => s.registerWithEmail);
   const signInWithPuter = useApp((s) => s.signInWithPuter);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -28,19 +30,43 @@ export function AuthModal() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
 
+  // === Google sign in ===
+  const handleGoogle = async () => {
+    setLoading("google");
+    const result = await signInWithGoogle();
+    setLoading(null);
+    if (!result.ok) {
+      toast.error(result.error || "Google sign-in failed.");
+    } else if (result.user) {
+      toast.success(`Welcome, ${result.user.name || "Candidate"}!`);
+      close();
+    }
+  };
+
+  // === Anonymous / Guest sign in ===
+  const handleGuest = async () => {
+    setLoading("guest");
+    const result = await signInAsGuest();
+    setLoading(null);
+    if (!result.ok) {
+      toast.error(result.error || "Guest sign-in failed.");
+    } else if (result.user) {
+      toast.success("Welcome! Entered as Guest.");
+      close();
+    }
+  };
+
   // === Puter.js sign in ===
-  // Puter users are auto-approved (their email is verified by Puter's OAuth:
-  // Google/GitHub/etc), so they go straight to the dashboard without admin approval.
   const handlePuter = async () => {
     setLoading("puter");
     const result = await signInWithPuter();
+    setLoading(null);
     if (!result.ok) {
       toast.error(result.error || "Puter sign-in failed.");
     } else if (result.user) {
-      // Puter users are always auto-approved — no pending state possible.
       toast.success(`Welcome to ${BRAND.name}!`);
+      close();
     }
-    setLoading(null);
   };
 
   // === Email sign in ===
@@ -55,17 +81,13 @@ export function AuthModal() {
       return;
     }
     setLoading("email");
-    await new Promise((r) => setTimeout(r, 400));
     const result = await signInWithEmail(email, password);
     setLoading(null);
     if (!result.ok) {
       toast.error(result.error || "Sign in failed.");
     } else if (result.user) {
-      if (result.user.status === "pending") {
-        toast.success("Signed in. Your account is awaiting admin approval.");
-      } else {
-        toast.success(`Welcome back, ${result.user.name}!`);
-      }
+      toast.success(`Welcome back, ${result.user.name}!`);
+      close();
     }
   };
 
@@ -86,13 +108,13 @@ export function AuthModal() {
       return;
     }
     setLoading("email");
-    await new Promise((r) => setTimeout(r, 400));
     const result = await registerWithEmail(email, password, name, username);
     setLoading(null);
     if (!result.ok) {
       toast.error(result.error || "Registration failed.");
     } else if (result.user) {
-      toast.success("Account created! Your account is pending admin approval. You'll be notified when approved.");
+      toast.success(`Account created! Welcome, ${result.user.name}!`);
+      close();
     }
   };
 
@@ -135,11 +157,62 @@ export function AuthModal() {
             </div>
 
             <div className="p-6 space-y-4">
-              {/* Continue with Puter */}
-              <Button onClick={handlePuter} disabled={!!loading} className="w-full bg-brand hover:bg-brand-dark text-white gap-2 h-11">
-                {loading === "puter" ? <Icon name="Loader2" className="w-4 h-4 animate-spin" /> : <Icon name="Sparkles" className="w-4 h-4" />}
-                Continue with Puter (free AI)
-              </Button>
+              {/* Cloud Firestore & Firebase Auth Active Badge */}
+              <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-600 dark:text-emerald-400">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Google Firebase Cloud Connected
+                </div>
+                <span className="text-[10px] opacity-75">Firestore & Auth</span>
+              </div>
+
+              {/* Primary OAuth Options: Google & Puter */}
+              <div className="space-y-2">
+                <Button
+                  onClick={handleGoogle}
+                  disabled={!!loading}
+                  variant="outline"
+                  className="w-full gap-2.5 h-11 border-border font-medium shadow-xs hover:bg-secondary"
+                >
+                  {loading === "google" ? (
+                    <Icon name="Loader2" className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                      />
+                    </svg>
+                  )}
+                  Continue with Google
+                </Button>
+
+                <Button
+                  onClick={handlePuter}
+                  disabled={!!loading}
+                  variant="outline"
+                  className="w-full gap-2 h-10 text-xs border-border"
+                >
+                  {loading === "puter" ? (
+                    <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Icon name="Sparkles" className="w-3.5 h-3.5 text-brand" />
+                  )}
+                  Continue with Puter (free AI quota)
+                </Button>
+              </div>
 
               <div className="relative">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
@@ -207,9 +280,25 @@ export function AuthModal() {
                 </button>
               </p>
 
+              <div className="pt-2 border-t border-border">
+                <Button
+                  onClick={handleGuest}
+                  disabled={!!loading}
+                  variant="ghost"
+                  className="w-full gap-2 text-xs text-muted-foreground hover:text-foreground h-9"
+                >
+                  {loading === "guest" ? (
+                    <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Icon name="User" className="w-3.5 h-3.5" />
+                  )}
+                  Continue as Guest (Anonymous Mode)
+                </Button>
+              </div>
+
               {mode === "signup" && (
                 <p className="text-center text-[11px] text-muted-foreground">
-                  New accounts require admin approval before accessing features.
+                  Your profile and resumes will sync automatically with Cloud Firestore.
                 </p>
               )}
             </div>

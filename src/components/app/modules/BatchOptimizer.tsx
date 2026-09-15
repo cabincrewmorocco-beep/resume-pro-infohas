@@ -316,6 +316,14 @@ export function BatchOptimizer() {
       // Step 1 – Parse
       patchItem(item.id, { status: "parsing", statusLabel: "Parsing file…" });
       const parsed = await parseResumeFile(item.file);
+      const originalEntry: ResumeData = {
+        ...parsed,
+        source: "upload",
+        title: parsed.title || `${parsed.name || "Resume"} (Uploaded)`,
+        fileName: item.file.name,
+        updatedAt: new Date().toISOString(),
+      };
+      addResume(originalEntry);
 
       // Step 2 – Optimize via AI
       patchItem(item.id, { status: "optimizing", statusLabel: "Optimizing with AI…" });
@@ -345,7 +353,9 @@ export function BatchOptimizer() {
 
       const optimized: ResumeData = {
         ...parsed,
-        id: uid("r"),
+        id: uid("opt"),
+        parentResumeId: originalEntry.id,
+        title: `${parsed.name || "Resume"} (Batch Optimized)`,
         headline: optData.headline || parsed.headline,
         summary: optData.summary || parsed.summary,
         skills: (optData.skills ?? []).map((s: any) =>

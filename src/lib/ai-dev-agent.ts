@@ -284,7 +284,7 @@ function makeProseReport(
  * dead code, broken imports, etc.
  */
 export async function scanCode(): Promise<AIDevReport> {
-  const userPrompt = `Perform a comprehensive code audit of this Next.js 16 + Cloudflare Pages + D1 application.
+  const userPrompt = `Perform a comprehensive code audit of this Vite 6 + React 19 + Cloudflare Pages + D1 application.
 
 Scan for:
 - TypeScript errors (type mismatches, missing properties, etc.)
@@ -294,11 +294,11 @@ Scan for:
 - Broken imports (modules that don't exist)
 - Unused dependencies
 - Memory leaks (uncleared intervals, listeners, etc.)
-- React hydration issues (useEffect without deps, SSR mismatches)
+- React rendering issues (useEffect without deps, state mutation)
 - React warnings (missing keys, unescaped entities, etc.)
 
 The application is at https://github.com/rachidSabah/INFOHAS-ATS-PRO.
-Key directories: src/lib (core logic), src/components (UI), src/app (Next.js routes), workers/api (Cloudflare Workers).
+Key directories: src/lib (core logic), src/components (UI), migrations (D1 schema), server.ts (dev/API server).
 
 Return ONLY valid JSON:
 {
@@ -342,7 +342,7 @@ Return ONLY valid JSON:
  * API logs for 404/401/403/500/timeout/runtime exceptions.
  */
 export async function analyzeErrors(): Promise<AIDevReport> {
-  const userPrompt = `Analyze this Next.js 16 + Cloudflare application for errors.
+  const userPrompt = `Analyze this Vite 6 + React 19 + Cloudflare application for errors.
 
 Detect:
 - HTTP 404 (not found), 401 (unauthorized), 403 (forbidden), 500 (server error)
@@ -351,11 +351,10 @@ Detect:
 - Validation failures (Zod, Yup, manual)
 
 Common error sources in this app:
-- Cloudflare Workers API at https://resumeai-pro-api.rachidelsabah.workers.dev
-- D1 database queries
-- AI provider calls (Puter, DeepSeek, OpenAI, etc.)
+- Browser IndexedDB / LocalStorage quota and storage transactions
+- Client-side AI provider calls (Puter, DeepSeek, OpenAI, etc.)
 - PDF/DOCX export (jsPDF, docx)
-- Auth (Puter OAuth, email/password)
+- Authentication and session state
 
 Return ONLY valid JSON:
 {
@@ -627,7 +626,7 @@ Return ONLY valid JSON:
  * SECURITY SCANNER — detect XSS, CSRF, SQL injection, open redirects, etc.
  */
 export async function scanSecurity(): Promise<AIDevReport> {
-  const userPrompt = `Perform a security audit of this Next.js 16 + Cloudflare app.
+  const userPrompt = `Perform a security audit of this Vite 6 + React 19 + Cloudflare app.
 
 Detect:
 - XSS (dangerouslySetInnerHTML, unescaped user input)
@@ -678,7 +677,7 @@ Return ONLY valid JSON:
  * PERFORMANCE ANALYZER — analyze LCP, CLS, INP, TTFB, bundle size, latency.
  */
 export async function analyzePerformance(): Promise<AIDevReport> {
-  const userPrompt = `Analyze the performance of this Next.js 16 + Cloudflare Pages app.
+  const userPrompt = `Analyze the performance of this Vite 6 + React 19 + Cloudflare Pages & Workers app.
 
 Metrics to assess:
 - LCP (Largest Contentful Paint) — should be < 2.5s
@@ -734,17 +733,15 @@ Return ONLY valid JSON:
  * env vars, worker bindings, routing, build output.
  */
 export async function validateDeployment(): Promise<AIDevReport> {
-  const userPrompt = `Validate the deployment configuration for this Cloudflare app.
+  const userPrompt = `Validate the deployment configuration for this standalone Vite 6 + React 19 SPA.
+Application Architecture: 100% Client-Side SPA running in AI Studio with IndexedDB persistence.
 
 Check:
-- Cloudflare Pages: wrangler.toml, build output (.next/standalone), env vars
-- Cloudflare Workers: wrangler.toml, bindings (D1, KV), secrets
-- Cloudflare D1: database ID, migrations applied
-- Cloudflare KV: namespace IDs
-- Environment Variables: NEXTAUTH_SECRET, JWT_SECRET, ENCRYPTION_KEY, etc.
-- Worker Bindings: DB, KV, vars
-- Routing: Pages <-> Worker API CORS
-- Build Output: .next/standalone generated correctly
+- Client-Side Architecture: No external database server or worker dependency required
+- Local Persistence: IndexedDB (ResumeEngineDB) stores: resumes, job_descriptions, ats_reports, applications, cover_letters, settings
+- Build Output: dist/ directory generated via 'npm run build' (Vite SPA production bundle)
+- Storage Integrity: LocalStorage fallback and IndexedDB transaction handling
+- Performance & PWA: Asset loading and offline capability
 
 Return ONLY valid JSON:
 {
@@ -752,11 +749,11 @@ Return ONLY valid JSON:
   "issues": [
     {
       "type": "deployment",
-      "severity": "error",
-      "file": "wrangler.toml",
-      "title": "Missing D1 binding in wrangler.toml",
-      "description": "The Workers API wrangler.toml doesn't bind the D1 database.",
-      "recommendedFix": "Add [[d1_databases]] binding = 'DB' database_name = 'resumeai-pro-db'"
+      "severity": "info",
+      "file": "vite.config.ts",
+      "title": "Configuration verified",
+      "description": "...",
+      "recommendedFix": "..."
     }
   ]
 }`;
@@ -769,10 +766,10 @@ Return ONLY valid JSON:
         title: "Deployment Validation",
         summary: data.summary,
         issues: (data.issues || []).map(normalizeIssue),
-      provider,
-      model,
-      createdBy: useApp.getState().user?.email || "system",
-    } as AIDevReport;
+        provider,
+        model,
+        createdBy: useApp.getState().user?.email || "system",
+      } as AIDevReport;
     }
     return makeProseReport("deployment_validation", "Deployment Validation", rawText, provider, model);
   } catch (e: any) {
@@ -784,23 +781,23 @@ Return ONLY valid JSON:
  * FEATURE GENERATOR — generate UI + API + DB + tests for a feature request.
  */
 export async function generateFeature(request: string): Promise<AIDevFeature> {
-  const userPrompt = `Generate a complete feature for this Next.js 16 + Cloudflare app.
+  const userPrompt = `Generate a complete feature for this Vite + React 19 + Cloudflare app.
 
 Feature Request: "${request}"
 
 Generate ALL files needed:
 1. UI component(s) in src/components/app/modules/
-2. API route(s) in src/app/api/ (if needed)
+2. Cloud API methods or routes in src/lib/
 3. Database migration in migrations/ (if needed)
-4. Tests in *.test.ts
-5. Update AppShell.tsx VIEW_COMPONENTS + access control (if new view)
+4. Tests in src/
+5. Update AppShell.tsx or navigation (if new view)
 
 Tech stack:
-- Next.js 16 (App Router, Turbopack)
-- React 19, TypeScript, Tailwind CSS 4, shadcn/ui
-- Zustand for state
+- Vite 6 + React 19, TypeScript, Tailwind CSS 4, Radix UI
+- Zustand for state management
 - Cloudflare D1 (SQLite) for database
-- Cloudflare Workers (Hono) for API
+- Cloudflare KV for session/cache storage
+- Cloudflare Worker for API backend
 
 Return ONLY valid JSON:
 {
@@ -1079,7 +1076,7 @@ function makeErrorReport(type: AIDevReport["type"], title: string, errorMsg: str
  * COMPLIANCE SCAN — scan the codebase for GDPR, SOC 2, and OWASP compliance issues.
  */
 export async function scanCompliance(): Promise<AIDevReport> {
-  const userPrompt = `Perform a comprehensive compliance audit (GDPR, SOC 2, HIPAA, and OWASP Top 10) of this Next.js application.
+  const userPrompt = `Perform a comprehensive compliance audit (GDPR, SOC 2, HIPAA, and OWASP Top 10) of this Vite 6 + React 19 + Cloudflare application.
 
 Scan for:
 - Data Protection & Privacy (GDPR/HIPAA): PII leakage, plaintext storage, missing log anonymization.

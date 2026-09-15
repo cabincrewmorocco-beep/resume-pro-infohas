@@ -45,6 +45,7 @@ function headlineIsDuplicateContact(headline: string, contact: ResumeData["conta
 }
 
 export function sanitizeResumeData(resume: ResumeData): ResumeData {
+  if (!resume) return {} as ResumeData;
   const cleanStr = (s: any): any => {
     if (typeof s === "string") {
       return s
@@ -67,28 +68,37 @@ export function sanitizeResumeData(resume: ResumeData): ResumeData {
     }
     return s;
   };
-  return cleanStr(resume);
+  const cleaned = cleanStr(resume) as ResumeData;
+  cleaned.experience = Array.isArray(cleaned.experience) ? cleaned.experience : [];
+  cleaned.education = Array.isArray(cleaned.education) ? cleaned.education : [];
+  cleaned.skills = Array.isArray(cleaned.skills) ? cleaned.skills : [];
+  cleaned.languages = Array.isArray(cleaned.languages) ? cleaned.languages : [];
+  cleaned.certifications = Array.isArray(cleaned.certifications) ? cleaned.certifications : [];
+  cleaned.projects = Array.isArray(cleaned.projects) ? cleaned.projects : [];
+  cleaned.dynamicSections = Array.isArray(cleaned.dynamicSections) ? cleaned.dynamicSections : [];
+  return cleaned;
 }
 
 export function adjustLayoutForPageFill(resume: ResumeData, layout: ResumeLayoutModel): ResumeLayoutModel {
   const getVisibleCharCount = (r: ResumeData): number => {
+    if (!r) return 0;
     let sum = (r.name || "").length + (r.headline || "").length + (r.summary || "").length;
-    for (const e of r.experience) {
-      sum += (e.title || "").length + (e.company || "").length + (e.location || "").length + e.bullets.join("").length;
+    for (const e of (r.experience || [])) {
+      sum += (e?.title || "").length + (e?.company || "").length + (e?.location || "").length + ((e?.bullets || []).filter(Boolean).join("")).length;
     }
-    for (const ed of r.education) {
-      sum += (ed.degree || "").length + (ed.institution || "").length + (ed.highlights || []).join("").length;
+    for (const ed of (r.education || [])) {
+      sum += (ed?.degree || "").length + (ed?.institution || "").length + ((ed?.highlights || []).filter(Boolean).join("")).length;
     }
-    for (const s of r.skills) {
-      sum += (s.name || "").length;
+    for (const s of (r.skills || [])) {
+      sum += (s?.name || "").length;
     }
-    for (const l of r.languages) {
-      sum += (l.name || "").length + (l.proficiency || "").length;
+    for (const l of (r.languages || [])) {
+      sum += (l?.name || "").length + (l?.proficiency || "").length;
     }
     if (r.additionalInfo) sum += r.additionalInfo.length;
     if (r.dynamicSections) {
-      for (const ds of r.dynamicSections) {
-        sum += (ds.title || "").length + (ds.content || "").length + (ds.bullets || []).join("").length;
+      for (const ds of (r.dynamicSections || [])) {
+        sum += (ds?.title || "").length + (ds?.content || "").length + ((ds?.bullets || []).filter(Boolean).join("")).length;
       }
     }
     return sum;
@@ -709,18 +719,6 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
     y += L.sectionGapMm;
   }
 
-  // ===== CORE COMPETENCIES & SKILLS =====
-  if (resume.skills.length > 0) {
-    sectionHeader("CORE COMPETENCIES & SKILLS");
-    doc.setFont("times", "normal");
-    doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
-    const grouped = groupSkillsByCategoryForPdf(resume.skills);
-    for (const g of grouped) {
-      drawBullet(`${g.category}: ${g.items.join(", ")}.`, contentW);
-    }
-    y += L.sectionGapMm;
-  }
-
   // ===== PROFESSIONAL EXPERIENCE =====
   if (resume.experience.length > 0) {
     sectionHeader("PROFESSIONAL EXPERIENCE");
@@ -732,7 +730,7 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
       doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
       const dateStr = `${fmtInfohasDate(exp.startDate)} – ${fmtInfohasDate(exp.endDate)}`;
       const dateWidth = doc.getTextWidth(dateStr);
-      const leftSide = `${exp.title} ${exp.company}${exp.location ? ` | ${exp.location}` : ""}`;
+      const leftSide = `${exp.title} ${exp.company ? `| ${exp.company}` : ""}${exp.location ? ` | ${exp.location}` : ""}`;
       const leftWidth = contentW - dateWidth - 4;
       const leftLines = doc.splitTextToSize(leftSide, leftWidth);
 
@@ -752,14 +750,15 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
     y += L.sectionGapMm;
   }
 
-  // ===== EDUCATION =====
+  // ===== EDUCATION & PROFESSIONAL DEVELOPMENT =====
   if (resume.education.length > 0) {
-    sectionHeader("EDUCATION");
+    sectionHeader("EDUCATION & PROFESSIONAL DEVELOPMENT");
     for (const ed of resume.education) {
       if (y > pageH - L.marginBottomMm - 20) break;
       doc.setFont("times", "bold");
       doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
-      const eduLine = `${ed.degree}${ed.institution ? ` | ${ed.institution}` : ""}${ed.location ? ` | ${ed.location}` : ""}${ed.startDate || ed.endDate ? ` | ${fmtInfohasDate(ed.startDate)} – ${fmtInfohasDate(ed.endDate)}` : ""}`;
+      const eduDegreeField = `${ed.degree || ""}${ed.field ? ` in ${ed.field}` : ""}`;
+      const eduLine = `${eduDegreeField || "Education"}${ed.institution ? ` | ${ed.institution}` : ""}${ed.location ? ` | ${ed.location}` : ""}${ed.startDate || ed.endDate ? ` | ${fmtInfohasDate(ed.startDate)} – ${fmtInfohasDate(ed.endDate)}` : ""}`;
       const eduLines = doc.splitTextToSize(eduLine, contentW);
       for (const line of eduLines) {
         doc.text(line, left, textY(L.bodyFontSizePt));
@@ -775,6 +774,18 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
     y += L.sectionGapMm;
   }
 
+  // ===== CORE COMPETENCIES & SKILLS =====
+  if (resume.skills.length > 0) {
+    sectionHeader("CORE COMPETENCIES & SKILLS");
+    doc.setFont("times", "normal");
+    doc.setTextColor(bodyRgb[0], bodyRgb[1], bodyRgb[2]);
+    const grouped = groupSkillsByCategoryForPdf(resume.skills);
+    for (const g of grouped) {
+      drawBullet(`${g.category}: ${g.items.join(", ")}.`, contentW);
+    }
+    y += L.sectionGapMm;
+  }
+
   // ===== LANGUAGES =====
   if (resume.languages.length > 0) {
     sectionHeader("LANGUAGES");
@@ -783,7 +794,8 @@ function exportInfohasProPDF(resume: ResumeData, opts: PDFOptions = {}, layout?:
     for (const l of resume.languages) {
       if (y > pageH - L.marginBottomMm - 10) break;
       const note = (l as any).note ? ` (${(l as any).note})` : "";
-      doc.text(`${l.name}: ${l.proficiency}${note}`, left, textY(L.bodyFontSizePt));
+      const prof = l.proficiency ? ` (${l.proficiency})` : "";
+      doc.text(`${l.name}${prof}${note}`, left, textY(L.bodyFontSizePt));
       advanceLine();
     }
     y += L.sectionGapMm;
@@ -1250,13 +1262,13 @@ export function exportResumeTXT(resume: ResumeData, sourceResume?: ResumeData | 
     }
   }
   if (resume.education.length) {
-    lines.push("EDUCATION");
+    lines.push("EDUCATION & PROFESSIONAL DEVELOPMENT");
     for (const ed of resume.education) {
-      lines.push(`${ed.degree}${ed.field ? " in " + ed.field : ""}${ed.institution ? ` | ${ed.institution}` : ""}  (${formatDate(ed.startDate)} – ${formatDate(ed.endDate)})`);
+      lines.push(`${ed.degree}${ed.field ? " in " + ed.field : ""}${ed.institution ? ` | ${ed.institution}` : ""}${ed.location ? ` | ${ed.location}` : ""}  (${formatDate(ed.startDate)} – ${formatDate(ed.endDate)})`);
     }
     lines.push("");
   }
-  if (resume.skills.length) lines.push("SKILLS", resume.skills.map((s) => s.name).join(", "), "");
+  if (resume.skills.length) lines.push("CORE COMPETENCIES & SKILLS", resume.skills.map((s) => s.name).join(", "), "");
   if (resume.projects.length) {
     lines.push("PROJECTS");
     for (const p of resume.projects) { lines.push(`• ${p.name}`); if (p.description) lines.push(`  ${p.description}`); }
@@ -1270,7 +1282,7 @@ export function exportResumeTXT(resume: ResumeData, sourceResume?: ResumeData | 
 
   if (resume.languages.length) {
     lines.push("LANGUAGES");
-    for (const l of resume.languages) lines.push(`• ${l.name}: ${l.proficiency}`);
+    for (const l of resume.languages) lines.push(`• ${l.name}${l.proficiency ? ` (${l.proficiency})` : ""}`);
     lines.push("");
   }
 

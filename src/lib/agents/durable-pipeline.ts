@@ -65,85 +65,66 @@ const WAIT_TICK_MS = 5_000;
 /** Overall stage time budget — the stage gives up HONESTLY after this. */
 const STAGE_TOTAL_BUDGET_MS = 15 * 60 * 1000;
 
-/** API base — same resolution as the supervisor's task API. */
-const TASK_API_BASE_URL =
-  typeof window !== "undefined" &&
-  typeof window.location !== "undefined" &&
-  typeof window.location.hostname === "string" &&
-  window.location.hostname === "localhost"
-    ? "http://localhost:8787"
-    : "https://resumeai-pro-api.rachidelsabah.workers.dev";
-
-export interface DurableStageEvent {
+interface LocalJob {
+  id: string;
+  taskId: string;
   stage: DurableStage;
-  state: "claimed" | "completed" | "retrying" | "exhausted";
-  attempt: number;
-  message?: string;
+  status: "pending" | "running" | "completed" | "failed";
+  attempts: number;
+  maxAttempts: number;
+  result?: unknown;
+  error?: string;
+  next_run_at: string | null;
 }
 
-export interface DurableRunnerInput {
-  resume: ResumeData;
-  jd: JobDescription;
-  /** Resolved plan values from the supervisor (already computed). */
-  userDirectives?: string;
-  aviationMode?: any;
-  enableReflection: boolean;
-  deepAgenticMode: boolean;
-  /** Checkpoint the UI passed in (previous recoverable run, same session). */
-  checkpoint?: PipelineCheckpoint;
-  profile?: unknown;
-  onProgress?: (progress: any) => void;
-  /** Supervisor-side UI hook (agent states, timeline). */
-  onStageEvent?: (event: DurableStageEvent) => void;
-}
-
-// ---------------------------------------------------------------------------
-// D1 job API — thin fetch wrappers (never throw: durable is best-effort)
-// ---------------------------------------------------------------------------
-
-async function jobsFetch(path: string, init?: RequestInit): Promise<any | null> {
-  try {
-    const res = await fetch(`${TASK_API_BASE_URL}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    });
-    const data: any = await res.json().catch(() => null);
-    return data;
-  } catch {
-    return null; // network down — caller decides the fallback
-  }
-}
+const localJobsMap = new Map<string, LocalJob>();
 
 async function enqueueStageJobs(taskId: string, stages: readonly DurableStage[]): Promise<boolean> {
-  const res = await jobsFetch("/api/pipeline/jobs", {
-    method: "POST",
-    body: JSON.stringify({ taskId, jobs: stages.map((stage) => ({ stage, maxAttempts: STAGE_MAX_ATTEMPTS })) }),
-  });
-  return !!res?.ok;
+  for (const stage of stages) {
+    const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    localJobsMap.set(id, {
+      id,
+      taskId,
+      stage,
+      status: "pending",
+      attempts: 0,
+      maxAttempts: STAGE_MAX_ATTEMPTS,
+      next_run_at: null,
+    });
+  }
+  return true;
 }
 
 async function claimStageJob(taskId: string, stage: DurableStage): Promise<any | null> {
-  const res = await jobsFetch("/api/pipeline/jobs/claim", {
-    method: "POST",
-    body: JSON.stringify({ taskId, stage, count: 1 }),
-  });
-  return res?.ok && Array.isArray(res.jobs) && res.jobs.length > 0 ? res.jobs[0] : null;
+  for (const job of localJobsMap.values()) {
+    if (job.taskId === taskId && job.stage === stage && (job.status === "pending" || job.status === "failed")) {
+      job.status = "running";
+      job.attempts += 1;
+      return job;
+    }
+  }
+  return null;
 }
 
 async function completeStageJob(jobId: string, result: unknown): Promise<void> {
-  await jobsFetch(`/api/pipeline/jobs/${encodeURIComponent(jobId)}/complete`, {
-    method: "POST",
-    body: JSON.stringify({ result }),
-  });
+  const job = localJobsMap.get(jobId);
+  if (job) {
+    job.status = "completed";
+    job.result = result;
+  }
 }
 
-/** Returns the server's {status, next_run_at} or null when unreachable. */
-async function failStageJob(jobId: string, error: string, retryAfterMs?: number | null): Promise<{ status: string; next_run_at: string | null } | null> {
-  const res = await jobsFetch(`/api/pipeline/jobs/${encodeURIComponent(jobId)}/fail`, {
-    method: "POST",
-    body: JSON.stringify({ error, retryAfterMs: retryAfterMs ?? undefined }),
-  });
-  return res?.ok ? { status: res.status, next_run_at: res.next_run_at } : null;
+async function failStageJob(
+  jobId: string,
+  error: string,
+  retryAfterMs?: number | null
+): Promise<{ status: string; next_run_at: string | null } | null> {
+  const job = localJobsMap.get(jobId);
+  if (!job) return null;
+  job.status = job.attempts >= job.maxAttempts ? "failed" : "pending";
+  job.error = error;
+  job.next_run_at = retryAfterMs ? new Date(Date.now() + retryAfterMs).toISOString() : null;
+  return { status: job.status, next_run_at: job.next_run_at };
 }
 
 function sleep(ms: number): Promise<void> {

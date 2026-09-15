@@ -282,7 +282,19 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
   prompts: applyActiveOverrides(SEED_PROMPTS, loadActiveOverrides(PROMPT_ACTIVE_KEY)),
   branding: SEED_BRANDING,
   flags: SEED_FLAGS,
-  optimizerDirective: SEED_OPTIMIZER_DIRECTIVE,
+  optimizerDirective: (() => {
+    if (typeof localStorage === "undefined") return SEED_OPTIMIZER_DIRECTIVE;
+    try {
+      const raw = localStorage.getItem("infohas_optimizer_directive");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          return { ...SEED_OPTIMIZER_DIRECTIVE, ...parsed };
+        }
+      }
+    } catch {}
+    return SEED_OPTIMIZER_DIRECTIVE;
+  })(),
   scenarios: SEED_SCENARIOS,
   interviewPersonas: INTERVIEW_PERSONAS.map((p) => ({ ...p })),
   customDirectiveProfiles: [],
@@ -566,13 +578,24 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
   },
 
   updateOptimizerDirective: (patch) => {
-    set((s) => ({ optimizerDirective: { ...s.optimizerDirective, ...patch } }));
-    cloudApiSafe(cloudApi.updateBranding as any)({ optimizerDirective: { ...get().optimizerDirective, ...patch } }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
+    const updated = { ...get().optimizerDirective, ...patch };
+    set({ optimizerDirective: updated });
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("infohas_optimizer_directive", JSON.stringify(updated));
+      }
+    } catch {}
+    cloudApiSafe(cloudApi.updateBranding as any)({ optimizerDirective: updated }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
     get().log({ actor: get().user?.email ?? "admin", action: "Optimizer directive updated", category: "admin", details: Object.keys(patch).join(", "), severity: "info" });
   },
 
   resetOptimizerDirective: () => {
     set({ optimizerDirective: SEED_OPTIMIZER_DIRECTIVE });
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem("infohas_optimizer_directive");
+      }
+    } catch {}
     cloudApiSafe(cloudApi.updateBranding as any)({ optimizerDirective: SEED_OPTIMIZER_DIRECTIVE }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
     get().log({ actor: get().user?.email ?? "admin", action: "Optimizer directive reset to defaults", category: "admin", details: "All parameters restored to factory defaults", severity: "warning" });
   },

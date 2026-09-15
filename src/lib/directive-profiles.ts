@@ -38,6 +38,7 @@ const ATS_CONSERVATIVE: DirectiveProfile = {
   description: "Safe optimization that preserves original resume structure. Minimal keyword injection, conservative ATS changes.",
   tags: ["ats", "safe", "conservative"],
   overrides: {
+    selectedProfileId: "ats-conservative",
     agentDirectives: {
       supervisor: { strictMode: true, enableRetries: true, enableProviderSwitch: false, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: false },
       summary: { atsAggressiveness: 25, preserveFacts: true, maxCharacters: 800, minCharacters: 300 },
@@ -52,15 +53,15 @@ const ATS_CONSERVATIVE: DirectiveProfile = {
 };
 
 /**
- * ATS Aggressive — Maximum ATS optimization. Inject keywords naturally where
- * supported by candidate experience, expand bullets, enrich skills.
+ * ATS Aggressive — Maximum ATS optimization.
  */
 const ATS_AGGRESSIVE: DirectiveProfile = {
   id: "ats-aggressive",
   name: "ATS Aggressive",
-  description: "Maximum ATS optimization. Inject keywords naturally where supported by experience, expand bullets, enrich skills.",
+  description: "Maximum ATS optimization. Aggressive keyword injection, restructured bullets for maximum ATS match.",
   tags: ["ats", "aggressive", "keywords"],
   overrides: {
+    selectedProfileId: "ats-aggressive",
     agentDirectives: {
       supervisor: { strictMode: false, enableRetries: true, enableProviderSwitch: true, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: true },
       summary: { atsAggressiveness: 85, preserveFacts: true, maxCharacters: 1200, minCharacters: 500 },
@@ -75,18 +76,41 @@ const ATS_AGGRESSIVE: DirectiveProfile = {
 };
 
 /**
- * Cabin Crew — Specialized for aviation/hospitality roles. Focuses on safety
- * certifications, language skills, customer service, physical requirements.
+ * Executive / High-End — Leadership-focused optimization.
  */
-const CABIN_CREW: DirectiveProfile = {
-  id: "cabin-crew",
-  name: "Cabin Crew / Aviation",
-  description: "Optimized for airline/hospitality roles. Highlights safety, languages, customer service, physical requirements.",
-  tags: ["aviation", "hospitality", "customer-service"],
+const EXECUTIVE_HIGH_END: DirectiveProfile = {
+  id: "executive",
+  name: "Executive / High-End",
+  description: "Leadership-focused optimization with narrative summaries and executive impact metrics.",
+  tags: ["executive", "narrative", "leadership"],
   overrides: {
+    selectedProfileId: "executive",
+    agentDirectives: {
+      supervisor: { strictMode: true, enableRetries: true, enableProviderSwitch: true, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: true },
+      summary: { atsAggressiveness: 65, preserveFacts: true, maxCharacters: 1200, minCharacters: 600 },
+      skills: { maxKeywords: 25, allowTransferableSkills: true, allowCompanyKeywords: false, allowLocationKeywords: false },
+      experience: { rewriteBulletsOnly: true, rewriteTitle: false, rewriteCompany: false, rewriteDates: false, rewriteLocation: false, maxExpansionPercent: 35 },
+      education: { formatOnly: true, stripSectionHeaders: true },
+      languages: { formatOnly: true },
+      guardian: { enforceEntityIntegrity: true, enforcePageUtilization: true, enforceContentLength: true, enforceNoDuplicates: true, enforceSummaryQuality: true, minimumScore: 80 },
+      additionalInfo: { preserveSection: true, improveWording: true, stripSectionHeaders: true },
+    },
+  },
+};
+
+/**
+ * Tech / Engineering — Technical optimization prioritizing hard skills.
+ */
+const TECH_ENGINEERING: DirectiveProfile = {
+  id: "tech",
+  name: "Tech / Engineering",
+  description: "Technical optimization prioritizing hard skills, tech stack categorization, and project architecture.",
+  tags: ["tech", "technical", "skills-first"],
+  overrides: {
+    selectedProfileId: "tech",
     agentDirectives: {
       supervisor: { strictMode: true, enableRetries: true, enableProviderSwitch: false, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: false },
-      summary: { atsAggressiveness: 60, preserveFacts: true, maxCharacters: 1000, minCharacters: 450 },
+      summary: { atsAggressiveness: 70, preserveFacts: true, maxCharacters: 900, minCharacters: 400 },
       skills: { maxKeywords: 25, allowTransferableSkills: true, allowCompanyKeywords: false, allowLocationKeywords: false },
       experience: { rewriteBulletsOnly: true, rewriteTitle: false, rewriteCompany: false, rewriteDates: false, rewriteLocation: false, maxExpansionPercent: 30 },
       education: { formatOnly: true, stripSectionHeaders: true },
@@ -98,66 +122,20 @@ const CABIN_CREW: DirectiveProfile = {
 };
 
 /**
- * Retail — For retail/sales roles. Focuses on customer service, sales metrics,
- * cash handling, product knowledge, team collaboration.
+ * Aviation / Hospitality — InfoHAS signature format.
  */
-const RETAIL: DirectiveProfile = {
-  id: "retail",
-  name: "Retail / Sales",
-  description: "Optimized for retail and sales roles. Highlights customer service, sales performance, cash handling.",
-  tags: ["retail", "sales", "customer-service"],
+const AVIATION_HOSPITALITY: DirectiveProfile = {
+  id: "aviation-hospitality",
+  name: "Aviation / Hospitality",
+  description: "InfoHAS signature format for aviation, cabin crew, and hospitality professionals.",
+  tags: ["aviation", "hospitality", "service"],
   overrides: {
+    selectedProfileId: "aviation-hospitality",
     agentDirectives: {
       supervisor: { strictMode: true, enableRetries: true, enableProviderSwitch: false, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: false },
-      summary: { atsAggressiveness: 50, preserveFacts: true, maxCharacters: 900, minCharacters: 400 },
-      skills: { maxKeywords: 20, allowTransferableSkills: true, allowCompanyKeywords: false, allowLocationKeywords: false },
-      experience: { rewriteBulletsOnly: true, rewriteTitle: false, rewriteCompany: false, rewriteDates: false, rewriteLocation: false, maxExpansionPercent: 25 },
-      education: { formatOnly: true, stripSectionHeaders: true },
-      languages: { formatOnly: true },
-      guardian: { enforceEntityIntegrity: true, enforcePageUtilization: true, enforceContentLength: true, enforceNoDuplicates: true, enforceSummaryQuality: true, minimumScore: 80 },
-      additionalInfo: { preserveSection: true, improveWording: true, stripSectionHeaders: true },
-    },
-  },
-};
-
-/**
- * Hospitality — For hotel/restaurant roles. Focuses on service excellence,
- * guest relations, team management, multilingual skills.
- */
-const HOSPITALITY: DirectiveProfile = {
-  id: "hospitality",
-  name: "Hospitality",
-  description: "Optimized for hotel/restaurant/tourism roles. Highlights guest service, multilingual skills, team coordination.",
-  tags: ["hospitality", "tourism", "service"],
-  overrides: {
-    agentDirectives: {
-      supervisor: { strictMode: true, enableRetries: true, enableProviderSwitch: false, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: false },
-      summary: { atsAggressiveness: 50, preserveFacts: true, maxCharacters: 950, minCharacters: 400 },
-      skills: { maxKeywords: 22, allowTransferableSkills: true, allowCompanyKeywords: false, allowLocationKeywords: false },
-      experience: { rewriteBulletsOnly: true, rewriteTitle: false, rewriteCompany: false, rewriteDates: false, rewriteLocation: false, maxExpansionPercent: 25 },
-      education: { formatOnly: true, stripSectionHeaders: true },
-      languages: { formatOnly: true },
-      guardian: { enforceEntityIntegrity: true, enforcePageUtilization: true, enforceContentLength: true, enforceNoDuplicates: true, enforceSummaryQuality: true, minimumScore: 80 },
-      additionalInfo: { preserveSection: true, improveWording: true, stripSectionHeaders: true },
-    },
-  },
-};
-
-/**
- * Executive — For senior/leadership roles. Focuses on strategic achievements,
- * team leadership, P&L responsibility, board-level communication.
- */
-const EXECUTIVE: DirectiveProfile = {
-  id: "executive",
-  name: "Executive / Leadership",
-  description: "Optimized for senior/executive roles. Highlights strategic leadership, P&L results, team development, board-level communication.",
-  tags: ["executive", "leadership", "senior"],
-  overrides: {
-    agentDirectives: {
-      supervisor: { strictMode: true, enableRetries: true, enableProviderSwitch: true, enforceImmutableEntities: true, enableDebugLogs: false, enableDiffViewer: true },
-      summary: { atsAggressiveness: 65, preserveFacts: true, maxCharacters: 1200, minCharacters: 600 },
+      summary: { atsAggressiveness: 60, preserveFacts: true, maxCharacters: 1000, minCharacters: 450 },
       skills: { maxKeywords: 25, allowTransferableSkills: true, allowCompanyKeywords: false, allowLocationKeywords: false },
-      experience: { rewriteBulletsOnly: true, rewriteTitle: false, rewriteCompany: false, rewriteDates: false, rewriteLocation: false, maxExpansionPercent: 35 },
+      experience: { rewriteBulletsOnly: true, rewriteTitle: false, rewriteCompany: false, rewriteDates: false, rewriteLocation: false, maxExpansionPercent: 30 },
       education: { formatOnly: true, stripSectionHeaders: true },
       languages: { formatOnly: true },
       guardian: { enforceEntityIntegrity: true, enforcePageUtilization: true, enforceContentLength: true, enforceNoDuplicates: true, enforceSummaryQuality: true, minimumScore: 80 },
@@ -176,10 +154,9 @@ const EXECUTIVE: DirectiveProfile = {
 export const BUILT_IN_PROFILES: Record<string, DirectiveProfile> = {
   "ats-conservative": ATS_CONSERVATIVE,
   "ats-aggressive": ATS_AGGRESSIVE,
-  "cabin-crew": CABIN_CREW,
-  "retail": RETAIL,
-  "hospitality": HOSPITALITY,
-  "executive": EXECUTIVE,
+  "executive": EXECUTIVE_HIGH_END,
+  "tech": TECH_ENGINEERING,
+  "aviation-hospitality": AVIATION_HOSPITALITY,
 };
 
 /**
@@ -195,12 +172,13 @@ export function getAllProfiles(): DirectiveProfile[] {
 
 /** Get a profile by ID — custom (incl. built-in overrides) first. */
 export function getProfile(id: string): DirectiveProfile | undefined {
+  if (id === "cabin-crew") return customProfiles["aviation-hospitality"] ?? BUILT_IN_PROFILES["aviation-hospitality"];
   return customProfiles[id] ?? BUILT_IN_PROFILES[id];
 }
 
 /** True when id refers to a SHIPPED built-in (even if currently shadowed). */
 export function isBuiltInProfile(id: string): boolean {
-  return Object.prototype.hasOwnProperty.call(BUILT_IN_PROFILES, id);
+  return id === "cabin-crew" || Object.prototype.hasOwnProperty.call(BUILT_IN_PROFILES, id);
 }
 
 // ============================================================================

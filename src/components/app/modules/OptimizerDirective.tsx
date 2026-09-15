@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import type { OptimizerDirectiveConfig, AgentDirectives, ATSSystemTarget, ToneWritingConfig, CustomKeywordsConfig, TextAlignment, RenderSectionType } from "@/lib/types";
 import { BUILT_IN_PROFILES, applyProfileToConfig, isBuiltInProfile } from "@/lib/directive-profiles";
 import type { DirectiveProfile } from "@/lib/directive-profiles";
-import { STRUCTURAL_BLUEPRINTS } from "@/lib/structural-blueprints";
+import { STRUCTURAL_BLUEPRINTS, isBuiltInBlueprint } from "@/lib/structural-blueprints";
 import type { StructuralBlueprint, ResumeSectionStructure } from "@/lib/structural-blueprints";
 
 // Canonical resume sections available for per-section text-alignment overrides.
@@ -196,9 +196,31 @@ export function OptimizerDirective() {
   }, [customProfiles]);
 
   const mergedBlueprints = useMemo(() => {
-    const map: Record<string, StructuralBlueprint> = { ...STRUCTURAL_BLUEPRINTS };
-    for (const bp of customBlueprints) map[bp.id] = bp;
-    return Object.values(map);
+    const list: StructuralBlueprint[] = Array.isArray(STRUCTURAL_BLUEPRINTS)
+      ? [...STRUCTURAL_BLUEPRINTS]
+      : Object.values(STRUCTURAL_BLUEPRINTS);
+    const map = new Map<string, StructuralBlueprint>();
+    for (const bp of list) {
+      map.set(bp.id, {
+        ...bp,
+        formattingHints: {
+          datesFormat: bp.formattingHints?.datesFormat || "Month Year (e.g. June 2024)",
+          bulletStyle: bp.formattingHints?.bulletStyle || "Quantified action verb bullets",
+          entityOrder: bp.formattingHints?.entityOrder || "Reverse Chronological",
+        },
+      });
+    }
+    for (const bp of customBlueprints) {
+      map.set(bp.id, {
+        ...bp,
+        formattingHints: {
+          datesFormat: bp.formattingHints?.datesFormat || "Month Year (e.g. June 2024)",
+          bulletStyle: bp.formattingHints?.bulletStyle || "Quantified action verb bullets",
+          entityOrder: bp.formattingHints?.entityOrder || "Reverse Chronological",
+        },
+      });
+    }
+    return Array.from(map.values());
   }, [customBlueprints]);
 
   const editingProfile = editingProfileId
@@ -379,10 +401,14 @@ export function OptimizerDirective() {
   };
 
   const openEditBlueprint = (bp: StructuralBlueprint) => {
-    const builtIn = Object.prototype.hasOwnProperty.call(STRUCTURAL_BLUEPRINTS, bp.id);
+    const builtIn = isBuiltInBlueprint(bp.id);
     const customized = customBlueprints.some((c) => c.id === bp.id);
     setBpOverridesBuiltIn(builtIn);
-    setBpEditor(cloneBlueprint(bp));
+    const cloned = cloneBlueprint(bp);
+    if (!cloned.formattingHints) {
+      cloned.formattingHints = { datesFormat: "", bulletStyle: "", entityOrder: "" };
+    }
+    setBpEditor(cloned);
     if (builtIn && !customized) {
       toast.info(`Customizing built-in "${bp.name}" — saving overrides the factory definition (restorable).`);
     }
@@ -390,8 +416,12 @@ export function OptimizerDirective() {
 
   const duplicateBlueprint = (bp: StructuralBlueprint) => {
     setBpOverridesBuiltIn(false);
+    const cloned = cloneBlueprint(bp);
+    if (!cloned.formattingHints) {
+      cloned.formattingHints = { datesFormat: "", bulletStyle: "", entityOrder: "" };
+    }
     setBpEditor({
-      ...cloneBlueprint(bp),
+      ...cloned,
       id: `custom_bp_${Date.now()}`,
       name: `${bp.name} (Copy)`,
     });
@@ -421,13 +451,13 @@ export function OptimizerDirective() {
       description: bpEditor.description.trim(),
       sections: bpEditor.sections.map((s) => ({
         ...s,
-        name: s.name.trim() || BLUEPRINT_SECTION_IDS.find((b) => b.id === s.id)?.label || s.id,
+        name: s.name?.trim() || (s as any).label?.trim() || BLUEPRINT_SECTION_IDS.find((b) => b.id === s.id)?.label || s.id,
         hints: (s.hints || []).map((h) => h.trim()).filter(Boolean),
       })),
       formattingHints: {
-        datesFormat: bpEditor.formattingHints.datesFormat.trim(),
-        bulletStyle: bpEditor.formattingHints.bulletStyle.trim(),
-        entityOrder: bpEditor.formattingHints.entityOrder.trim(),
+        datesFormat: (bpEditor.formattingHints?.datesFormat || "").trim(),
+        bulletStyle: (bpEditor.formattingHints?.bulletStyle || "").trim(),
+        entityOrder: (bpEditor.formattingHints?.entityOrder || "").trim(),
       },
     };
     const next = [...customBlueprints.filter((c) => c.id !== cleaned.id), cleaned];
@@ -439,7 +469,7 @@ export function OptimizerDirective() {
   };
 
   const deleteBlueprint = (id: string) => {
-    const wasBuiltIn = Object.prototype.hasOwnProperty.call(STRUCTURAL_BLUEPRINTS, id);
+    const wasBuiltIn = isBuiltInBlueprint(id);
     if (!confirm(wasBuiltIn
       ? "Restore this built-in blueprint to its factory definition? Your customization will be removed."
       : "Delete this custom blueprint? This cannot be undone.")) return;
@@ -520,12 +550,14 @@ export function OptimizerDirective() {
               const customized = customProfiles.some((c) => c.id === profile.id);
               const builtIn = isBuiltInProfile(profile.id);
               const beingEdited = editingProfileId === profile.id;
+              const isActive = (draft.selectedProfileId || "aviation-hospitality") === profile.id;
               return (
-                <div key={profile.id} className={`relative flex flex-col items-start p-3 rounded-lg border text-left transition-all ${beingEdited ? "border-brand bg-brand/5 dark:bg-brand/10 ring-1 ring-brand" : "border-input bg-background hover:bg-secondary/40 hover:border-brand/40"}`}>
+                <div key={profile.id} className={`relative flex flex-col items-start p-3 rounded-lg border text-left transition-all ${beingEdited ? "border-brand bg-brand/5 dark:bg-brand/10 ring-1 ring-brand" : isActive ? "border-emerald-600/60 bg-emerald-500/5 ring-1 ring-emerald-500/30" : "border-input bg-background hover:bg-secondary/40 hover:border-brand/40"}`}>
                   <button
                     onClick={() => {
                       const merged = applyProfileToConfig(draft, profile);
                       if (merged) {
+                        merged.selectedProfileId = profile.id;
                         setDraft(merged);
                         setDirty(true);
                         setEditingProfileId(profile.id);
@@ -534,8 +566,15 @@ export function OptimizerDirective() {
                     }}
                     className="w-full text-left"
                   >
-                    <span className="text-sm font-semibold pr-12">{profile.name}</span>
-                    <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                    <div className="flex items-start justify-between gap-2 pr-1">
+                      <span className="text-sm font-semibold">{profile.name}</span>
+                      {isActive && (
+                        <Badge className="text-[9px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0 font-medium">
+                          Active
+                        </Badge>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 block font-mono">
                       {profile.tags?.length ? profile.tags.join(", ") : "custom"}
                     </span>
                     <span className="text-xs text-muted-foreground mt-1 line-clamp-2 block">{profile.description}</span>
@@ -603,7 +642,7 @@ export function OptimizerDirective() {
           <div className="grid md:grid-cols-3 gap-3">
             {mergedBlueprints.map((bp) => {
               const isSelected = (draft.selectedStructuralBlueprintId || "infohas_aviation") === bp.id;
-              const builtIn = Object.prototype.hasOwnProperty.call(STRUCTURAL_BLUEPRINTS, bp.id);
+              const builtIn = isBuiltInBlueprint(bp.id);
               const customized = customBlueprints.some((c) => c.id === bp.id);
               return (
                 <div
@@ -671,7 +710,7 @@ export function OptimizerDirective() {
           {/* Blueprint Details */}
           {(() => {
             const activeId = draft.selectedStructuralBlueprintId || "infohas_aviation";
-            const activeBp = mergedBlueprints.find((b) => b.id === activeId);
+            const activeBp = mergedBlueprints.find((b) => b.id === activeId) || mergedBlueprints[0];
             if (!activeBp) return null;
             return (
               <div className="rounded-lg bg-muted/40 border p-4 space-y-3 text-xs leading-normal">
@@ -683,9 +722,9 @@ export function OptimizerDirective() {
                   <div>
                     <span className="text-muted-foreground font-medium block mb-1">Target Section Order:</span>
                     <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-foreground/80">
-                      {activeBp.sections.map((sec) => (
+                      {(activeBp.sections || []).map((sec) => (
                         <li key={sec.id}>
-                          <span className="font-medium text-foreground">{sec.name}</span>
+                          <span className="font-medium text-foreground">{sec.name || (sec as any).label || sec.id}</span>
                           {sec.maxEntries && ` (Max ${sec.maxEntries} entries)`}
                           {sec.maxBulletsPerEntry && ` (Max ${sec.maxBulletsPerEntry} bullets)`}
                         </li>
@@ -695,15 +734,15 @@ export function OptimizerDirective() {
                   <div className="space-y-2">
                     <div>
                       <span className="text-muted-foreground font-medium block">Date Representation Format:</span>
-                      <p className="text-[11px] text-foreground/80 font-mono mt-0.5">{activeBp.formattingHints.datesFormat}</p>
+                      <p className="text-[11px] text-foreground/80 font-mono mt-0.5">{activeBp.formattingHints?.datesFormat || "Month Year (e.g. June 2024)"}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground font-medium block">Bullet Writing Style:</span>
-                      <p className="text-[11px] text-foreground/80 mt-0.5">{activeBp.formattingHints.bulletStyle}</p>
+                      <p className="text-[11px] text-foreground/80 mt-0.5">{activeBp.formattingHints?.bulletStyle || "Quantified action verb bullets"}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground font-medium block">Sorting & Hierarchy Rules:</span>
-                      <p className="text-[11px] text-foreground/80 mt-0.5">{activeBp.formattingHints.entityOrder}</p>
+                      <p className="text-[11px] text-foreground/80 mt-0.5">{activeBp.formattingHints?.entityOrder || "Reverse Chronological"}</p>
                     </div>
                   </div>
                 </div>
@@ -965,8 +1004,15 @@ export function OptimizerDirective() {
                     <Label htmlFor="bp-dates">Dates format</Label>
                     <Input
                       id="bp-dates"
-                      value={bpEditor.formattingHints.datesFormat}
-                      onChange={(e) => setBpEditor({ ...bpEditor, formattingHints: { ...bpEditor.formattingHints, datesFormat: e.target.value } })}
+                      value={bpEditor.formattingHints?.datesFormat || ""}
+                      onChange={(e) => setBpEditor({
+                        ...bpEditor,
+                        formattingHints: {
+                          datesFormat: e.target.value,
+                          bulletStyle: bpEditor.formattingHints?.bulletStyle || "",
+                          entityOrder: bpEditor.formattingHints?.entityOrder || "",
+                        },
+                      })}
                       placeholder="YYYY-MM"
                       className="mt-1"
                     />
@@ -975,8 +1021,15 @@ export function OptimizerDirective() {
                     <Label htmlFor="bp-bullets">Bullet style</Label>
                     <Input
                       id="bp-bullets"
-                      value={bpEditor.formattingHints.bulletStyle}
-                      onChange={(e) => setBpEditor({ ...bpEditor, formattingHints: { ...bpEditor.formattingHints, bulletStyle: e.target.value } })}
+                      value={bpEditor.formattingHints?.bulletStyle || ""}
+                      onChange={(e) => setBpEditor({
+                        ...bpEditor,
+                        formattingHints: {
+                          datesFormat: bpEditor.formattingHints?.datesFormat || "",
+                          bulletStyle: e.target.value,
+                          entityOrder: bpEditor.formattingHints?.entityOrder || "",
+                        },
+                      })}
                       placeholder="Quantified action verb bullets"
                       className="mt-1"
                     />
@@ -985,8 +1038,15 @@ export function OptimizerDirective() {
                     <Label htmlFor="bp-order">Entity order</Label>
                     <Input
                       id="bp-order"
-                      value={bpEditor.formattingHints.entityOrder}
-                      onChange={(e) => setBpEditor({ ...bpEditor, formattingHints: { ...bpEditor.formattingHints, entityOrder: e.target.value } })}
+                      value={bpEditor.formattingHints?.entityOrder || ""}
+                      onChange={(e) => setBpEditor({
+                        ...bpEditor,
+                        formattingHints: {
+                          datesFormat: bpEditor.formattingHints?.datesFormat || "",
+                          bulletStyle: bpEditor.formattingHints?.bulletStyle || "",
+                          entityOrder: e.target.value,
+                        },
+                      })}
                       placeholder="Degrees -> Experience"
                       className="mt-1"
                     />
@@ -2653,7 +2713,16 @@ function LayoutStructureSection({
   draft: OptimizerDirectiveConfig;
   patch: (p: Partial<OptimizerDirectiveConfig>) => void;
 }) {
-  const currentOrder = draft.sectionOrder ?? ["summary", "experience", "education", "skills", "languages", "projects", "certifications", "additionalInfo"];
+  const currentOrder = draft.sectionOrder ?? [
+    "summary",
+    "experience",
+    "education",
+    "skills",
+    "languages",
+    "projects",
+    "certifications",
+    "additionalInfo",
+  ];
 
   const handleMoveSection = (index: number, direction: "up" | "down") => {
     const nextOrder = [...currentOrder];
@@ -2666,102 +2735,178 @@ function LayoutStructureSection({
     }
   };
 
-  const sectionLabels: Record<string, string> = {
-    summary: "Summary / Professional Profile",
-    experience: "Work Experience",
-    education: "Education History",
-    skills: "Core Skills & Competencies",
-    languages: "Languages",
-    certifications: "Certifications",
-    projects: "Key Projects",
-    additionalInfo: "Additional Information",
+  const SECTION_METADATA: Record<string, { label: string; badge: string; desc: string }> = {
+    summary: {
+      label: "Professional Profile",
+      badge: "SUMMARY",
+      desc: "Summary paragraph / professional profile",
+    },
+    experience: {
+      label: "Professional Experience",
+      badge: "EXPERIENCE",
+      desc: "Work history with job titles, companies, dates, and achievement bullets",
+    },
+    education: {
+      label: "Education & Development",
+      badge: "EDUCATION",
+      desc: "Degrees, institutions, graduation dates, and coursework",
+    },
+    skills: {
+      label: "Core Competencies & Skills",
+      badge: "SKILLS",
+      desc: "Categorized skills list with bullet points",
+    },
+    languages: {
+      label: "Languages",
+      badge: "LANGUAGES",
+      desc: "Language proficiencies",
+    },
+    projects: {
+      label: "Key Projects",
+      badge: "PROJECTS",
+      desc: "Projects with descriptions and tech stacks",
+    },
+    certifications: {
+      label: "Certifications",
+      badge: "CERTIFICATIONS",
+      desc: "Licenses and certifications with issuing organizations",
+    },
+    additionalInfo: {
+      label: "Additional Information",
+      badge: "ADDITIONAL",
+      desc: "Volunteer work, awards, publications, and other details",
+    },
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Icon name="LayoutGrid" className="w-5 h-5 text-brand" /> Page Layout & Formatting Controls
-        </CardTitle>
-        <CardDescription>
-          Adjust the visual formatting of the resume page, standardize date appearances, and control the order of sections.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {/* Spacing & Date Format grid */}
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="contactSpacingSelect">Contact Block Spacing</Label>
-            <select
-              id="contactSpacingSelect"
-              value={draft.contactSpacing ?? "stacked"}
-              onChange={(e) => patch({ contactSpacing: e.target.value as any })}
-              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm mt-1"
-            >
-              <option value="stacked">Stacked Layout (Multi-line contact details)</option>
-              <option value="single-line">Single-Line Layout (Inline dividers email | phone | location)</option>
-            </select>
-            <span className="text-[10px] text-muted-foreground">Single-Line saves about 3-4 lines of page space, helpful for 1-page fits.</span>
+    <div className="space-y-6">
+      {/* SECTION ORDERING */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Icon name="ListOrdered" className="w-5 h-5 text-brand" /> Section Ordering (Drag to Reorder)
+          </CardTitle>
+          <CardDescription>
+            Control the top-to-bottom sequence of sections on the resume. The AI will generate sections in this exact order, and all renderers (Preview, PDF, DOCX, DOC) will display them accordingly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="border border-input rounded-lg divide-y divide-border overflow-hidden bg-background">
+            {currentOrder.map((sec, idx) => {
+              const meta = SECTION_METADATA[sec] || {
+                label: sec,
+                badge: sec.toUpperCase(),
+                desc: "Custom section",
+              };
+              return (
+                <div key={sec} className="flex items-center justify-between p-3 bg-secondary/5 hover:bg-secondary/15 transition-colors gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className="w-6 h-6 rounded-full bg-secondary text-secondary-foreground flex items-center justify-center text-xs font-bold shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-foreground">{meta.label}</span>
+                        <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0">
+                          {meta.badge}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">{meta.desc}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleMoveSection(idx, "up")}
+                      disabled={idx === 0}
+                      className="p-1 h-7 w-7"
+                      title="Move Up"
+                    >
+                      <Icon name="ChevronUp" className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleMoveSection(idx, "down")}
+                      disabled={idx === currentOrder.length - 1}
+                      className="p-1 h-7 w-7"
+                      title="Move Down"
+                    >
+                      <Icon name="ChevronDown" className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          <div>
-            <Label htmlFor="dateFormatSelect">Date Format Standardization</Label>
-            <select
-              id="dateFormatSelect"
-              value={draft.dateFormat ?? "auto"}
-              onChange={(e) => patch({ dateFormat: e.target.value as any })}
-              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm mt-1"
-            >
-              <option value="auto">Auto / Flexible (Preserves candidate format)</option>
-              <option value="month-year">Month Year (e.g., "June 2026")</option>
-              <option value="short-date">Short Date (e.g., "06/2026")</option>
-              <option value="year-only">Year Only (e.g., "2026")</option>
-            </select>
-            <span className="text-[10px] text-muted-foreground">Enforces a unified format for all experience and education entries.</span>
-          </div>
-        </div>
+          {/* Spacing & Date Format grid */}
+          <div className="grid sm:grid-cols-2 gap-4 pt-2 border-t border-border/60">
+            <div>
+              <Label htmlFor="contactSpacingSelect">Contact Block Spacing</Label>
+              <select
+                id="contactSpacingSelect"
+                value={draft.contactSpacing ?? "stacked"}
+                onChange={(e) => patch({ contactSpacing: e.target.value as any })}
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm mt-1"
+              >
+                <option value="stacked">Stacked Layout (Multi-line contact details)</option>
+                <option value="single-line">Single-Line Layout (Inline dividers email | phone | location)</option>
+              </select>
+              <span className="text-[10px] text-muted-foreground">Single-Line saves about 3-4 lines of page space, helpful for 1-page fits.</span>
+            </div>
 
-        {/* Section Reordering List */}
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">Drag or Move Sections Order</Label>
-          <p className="text-xs text-muted-foreground mb-3">
-            Change the order of sections on the rendered page.
-          </p>
-          <div className="border border-input rounded-lg divide-y divide-border overflow-hidden">
-            {currentOrder.map((sec, idx) => (
-              <div key={sec} className="flex items-center justify-between p-3 bg-secondary/10 hover:bg-secondary/20 transition-colors">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground font-mono">{idx + 1}.</span>
-                  <span className="text-sm font-medium">{sectionLabels[sec] || sec}</span>
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleMoveSection(idx, "up")}
-                    disabled={idx === 0}
-                    className="p-1 h-7 w-7"
-                    title="Move Up"
-                  >
-                    <Icon name="ChevronUp" className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleMoveSection(idx, "down")}
-                    disabled={idx === currentOrder.length - 1}
-                    className="p-1 h-7 w-7"
-                    title="Move Down"
-                  >
-                    <Icon name="ChevronDown" className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+            <div>
+              <Label htmlFor="dateFormatSelect">Date Format Standardization</Label>
+              <select
+                id="dateFormatSelect"
+                value={draft.dateFormat ?? "auto"}
+                onChange={(e) => patch({ dateFormat: e.target.value as any })}
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm mt-1"
+              >
+                <option value="auto">Auto / Flexible (Preserves candidate format)</option>
+                <option value="month-year">Month Year (e.g., "June 2026")</option>
+                <option value="short-date">Short Date (e.g., "06/2026")</option>
+                <option value="year-only">Year Only (e.g., "2026")</option>
+              </select>
+              <span className="text-[10px] text-muted-foreground">Enforces a unified format for all experience and education entries.</span>
+            </div>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      {/* AI MODEL SELECTION */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Icon name="Sparkles" className="w-5 h-5 text-brand" /> AI Model Selection
+          </CardTitle>
+          <CardDescription>
+            Primary model used for resume generation and optimization.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="max-w-md space-y-1.5">
+            <Label htmlFor="primaryAiModelSelect">Primary Model</Label>
+            <select
+              id="primaryAiModelSelect"
+              value={draft.aiModel || "gemini-2.5-flash"}
+              onChange={(e) => patch({ aiModel: e.target.value })}
+              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm font-mono"
+            >
+              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+              <option value="gpt-4o-mini">gpt-4o-mini</option>
+              <option value="gpt-4o">gpt-4o</option>
+              <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+              <option value="deepseek-chat">deepseek-chat</option>
+            </select>
+            <p className="text-xs text-muted-foreground">Fast, high-quality optimization (recommended)</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

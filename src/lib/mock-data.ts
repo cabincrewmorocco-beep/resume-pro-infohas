@@ -1070,17 +1070,19 @@ export const SEED_FLAGS: FeatureFlags = {
  * settings page. The values are stored in D1 and synced to all clients.
  */
 export const SEED_OPTIMIZER_DIRECTIVE: OptimizerDirectiveConfig = {
+  selectedProfileId: "aviation-hospitality",
   selectedStructuralBlueprintId: "infohas_aviation",
+  aiModel: "gemini-2.5-flash",
   // === PAGE ===
   pageSize: "A4",
-  marginTopMm: 6.35,       // 0.25 inch
-  marginBottomMm: 6.35,    // 0.25 inch
-  marginLeftMm: 8.89,      // 0.35 inch
-  marginRightMm: 8.89,     // 0.35 inch
+  marginTopMm: 4.5,
+  marginBottomMm: 4.5,
+  marginLeftMm: 6.89,
+  marginRightMm: 6.89,
 
   // === FONTS ===
   fontFamily: "Times New Roman",
-  bodyFontSizePt: 10.5,
+  bodyFontSizePt: 11,
   sectionTitleSizePt: 12,
   nameSizePt: 14,
 
@@ -1090,18 +1092,18 @@ export const SEED_OPTIMIZER_DIRECTIVE: OptimizerDirectiveConfig = {
   bodyTextColor: "#000000",   // pure black
 
   // === SPACING ===
-  lineHeight: 1.2,          // compact single-spacing
-  sectionGapMm: 3,          // compact section gap
-  bulletIndentMm: 4,        // bullet indent from left margin
+  lineHeight: 1.05,          // compact line height
+  sectionGapMm: 4.5,         // section gap
+  bulletIndentMm: 4,         // bullet indent from left margin
 
   // === PHOTO ===
   photoEnabled: true,
   photoWidthMm: 30,         // 3.0cm
   photoHeightMm: 40,        // 4.0cm
-  showPlaceholderIfNoPhoto: false, // remove photo section entirely if no photo
+  showPlaceholderIfNoPhoto: true, // Show the photo frame in the header
 
   // === CONTENT LIMITS ===
-  summaryMinWords: 60,
+  summaryMinWords: 70,
   summaryMaxWords: 90,
   skillsMaxGroups: 4,
   experienceMaxEntries: 4,
@@ -1276,9 +1278,9 @@ export const SEED_AI_DEV_SETTINGS: AIDevAgentSettings = {
   timeout: 60,
   streaming: false,
   reasoningLevel: "medium",
-  systemPrompt: `You are an elite AI Development Agent for ResumeAI Pro — a production Next.js 16 + Cloudflare Pages + D1 application. You have deep expertise in:
-- TypeScript, React 19, Next.js 16, Tailwind CSS 4, shadcn/ui
-- Cloudflare Pages (Edge Runtime), Workers (Hono), D1 (SQLite), KV
+  systemPrompt: `You are an elite AI Development Agent for ResumeAI Pro / InfoHAS ATS Pro — a production Vite 6 + React 19 + Cloudflare Pages & Workers + D1 application. You have deep expertise in:
+- TypeScript, React 19, Vite 6, Tailwind CSS 4, Radix UI
+- Cloudflare Pages, Workers, D1 (SQLite), KV
 - Code auditing, security analysis, performance optimization, testing
 - Git diff/patch generation, migration scripts, deployment validation
 

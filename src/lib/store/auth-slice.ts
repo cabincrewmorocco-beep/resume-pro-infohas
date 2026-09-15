@@ -9,6 +9,15 @@ import type { AppState } from "../store";
 import type { User, ViewKey } from "../types";
 import { SUPER_ADMIN_SEED, verifyPassword, hashPassword, canSignIn } from "../auth-utils";
 import { uid } from "./helpers";
+import {
+  loginWithEmail,
+  registerWithEmail as fbRegisterWithEmail,
+  loginWithGoogle,
+  loginAsGuest,
+  logoutFirebaseUser,
+  syncLocalDataToFirestore,
+  onFirebaseAuthStateChanged,
+} from "../firebase";
 
 const USER_STORAGE_KEY = "resumeai_session_user";
 const USERS_STORAGE_KEY = "resumeai_users_list";
@@ -29,6 +38,8 @@ export interface AuthSlice {
   closeAuth: () => void;
   signIn: (user: User) => void;
   signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
+  signInWithGoogle: () => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
+  signInAsGuest: () => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
   signInWithPuter: () => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
   signOut: () => void;
   registerWithEmail: (nameOrEmail: string, emailOrPass: string, passOrName: string, maybeUsername?: string) => Promise<{ success: boolean; ok: boolean; error?: string; user?: User }>;
@@ -111,7 +122,7 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
       const users = get().users;
       const normalized = email.trim().toLowerCase();
 
-      // Check superadmin match directly
+      // 1. Check superadmin seed directly
       if (normalized === SUPER_ADMIN_SEED.email.toLowerCase()) {
         if (pass === SUPER_ADMIN_SEED.password) {
           const adminUser: User = {
@@ -128,22 +139,100 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
         }
       }
 
-      const match = users.find((u) => u.email.toLowerCase() === normalized);
-      if (!match) {
-        return { success: false, ok: false, error: "Invalid email or password." };
+      // 2. Try Firebase Authentication
+      try {
+        const fbUser = await loginWithEmail(normalized, pass);
+        if (fbUser) {
+          const user: User = {
+            id: fbUser.uid,
+            email: fbUser.email || normalized,
+            name: fbUser.displayName || normalized.split("@")[0] || "User",
+            role: "user",
+            status: "approved",
+            provider: "firebase_email",
+            createdAt: new Date().toISOString(),
+          };
+          get().signIn(user);
+          syncLocalDataToFirestore(user.id).catch(() => {});
+          return { success: true, ok: true, user };
+        }
+      } catch (fbErr: any) {
+        // Fallback to local stored user if offline or previously created locally
+        const match = users.find((u) => u.email.toLowerCase() === normalized);
+        if (match) {
+          const allowed = canSignIn(match);
+          if (!allowed.allowed) {
+            return { success: false, ok: false, error: allowed.reason || "Account access denied." };
+          }
+          if (match.passwordHash && !verifyPassword(pass, match.passwordHash)) {
+            return { success: false, ok: false, error: "Invalid email or password." };
+          }
+          get().signIn(match);
+          syncLocalDataToFirestore(match.id).catch(() => {});
+          return { success: true, ok: true, user: match };
+        }
+        return {
+          success: false,
+          ok: false,
+          error: fbErr?.message?.replace("Firebase: ", "") || "Invalid email or password.",
+        };
       }
 
-      const allowed = canSignIn(match);
-      if (!allowed.allowed) {
-        return { success: false, ok: false, error: allowed.reason || "Account access denied." };
-      }
+      return { success: false, ok: false, error: "Invalid email or password." };
+    },
 
-      if (match.passwordHash && !verifyPassword(pass, match.passwordHash)) {
-        return { success: false, ok: false, error: "Invalid email or password." };
+    signInWithGoogle: async () => {
+      try {
+        const fbUser = await loginWithGoogle();
+        if (fbUser) {
+          const user: User = {
+            id: fbUser.uid,
+            email: fbUser.email || "google-user@infohas.pro",
+            name: fbUser.displayName || "Google Candidate",
+            role: "user",
+            status: "approved",
+            provider: "google",
+            createdAt: new Date().toISOString(),
+          };
+          get().signIn(user);
+          syncLocalDataToFirestore(user.id).catch(() => {});
+          return { success: true, ok: true, user };
+        }
+        return { success: false, ok: false, error: "Google sign-in was cancelled" };
+      } catch (err: any) {
+        return {
+          success: false,
+          ok: false,
+          error: err?.message?.replace("Firebase: ", "") || "Google sign-in encountered an issue",
+        };
       }
+    },
 
-      get().signIn(match);
-      return { success: true, ok: true, user: match };
+    signInAsGuest: async () => {
+      try {
+        let guestId = `guest_${uid()}`;
+        try {
+          const fbUser = await loginAsGuest();
+          if (fbUser) {
+            guestId = fbUser.uid;
+          }
+        } catch {
+          // offline local fallback
+        }
+        const guestUser: User = {
+          id: guestId,
+          email: "guest@resumepro.local",
+          name: "Guest Candidate",
+          role: "guest",
+          status: "approved",
+          provider: "anonymous",
+          createdAt: new Date().toISOString(),
+        };
+        get().signIn(guestUser);
+        return { success: true, ok: true, user: guestUser };
+      } catch (err: any) {
+        return { success: false, ok: false, error: err instanceof Error ? err.message : "Guest access failed" };
+      }
     },
 
     signInWithPuter: async () => {
@@ -180,6 +269,7 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
     },
 
     signOut: () => {
+      logoutFirebaseUser().catch(() => {});
       if (typeof localStorage !== "undefined") {
         localStorage.removeItem(USER_STORAGE_KEY);
       }
@@ -201,10 +291,38 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
 
       const users = [...get().users];
       const normalized = email.trim().toLowerCase();
-      if (users.some((u) => u.email.toLowerCase() === normalized)) {
-        return { success: false, ok: false, error: "An account with this email already exists." };
+
+      // 1. Try Firebase Authentication
+      try {
+        const fbUser = await fbRegisterWithEmail(normalized, pass, name);
+        if (fbUser) {
+          const newUser: User = {
+            id: fbUser.uid,
+            name: name.trim() || fbUser.displayName || "User",
+            email: normalized,
+            username: username?.trim() || undefined,
+            role: "user",
+            status: "approved",
+            provider: "firebase_email",
+            createdAt: new Date().toISOString(),
+          };
+          users.push(newUser);
+          if (typeof localStorage !== "undefined") {
+            localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+          }
+          set({ users });
+          get().signIn(newUser);
+          syncLocalDataToFirestore(newUser.id).catch(() => {});
+          return { success: true, ok: true, user: newUser };
+        }
+      } catch (fbErr: any) {
+        // If Firebase throws, verify if it's already in use
+        if (fbErr?.code === "auth/email-already-in-use" || users.some((u) => u.email.toLowerCase() === normalized)) {
+          return { success: false, ok: false, error: "An account with this email already exists." };
+        }
       }
 
+      // 2. Fallback offline registration
       const newUser: User = {
         id: `u_${uid()}`,
         name: name.trim() || "User",
@@ -343,6 +461,28 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
     rehydrateSession: () => {
       const user = loadStoredUser();
       set({ user, isAuthed: user !== null, _needsRehydrate: false });
+      if (typeof window !== "undefined") {
+        onFirebaseAuthStateChanged((fbUser) => {
+          if (fbUser) {
+            const current = get().user;
+            if (!current || current.id !== fbUser.uid) {
+              const u: User = {
+                id: fbUser.uid,
+                email: fbUser.email || current?.email || "candidate@resumepro.cloud",
+                name: fbUser.displayName || current?.name || "Candidate",
+                role: current?.role || "user",
+                status: "approved",
+                provider: fbUser.isAnonymous ? "anonymous" : "firebase_auth",
+                createdAt: current?.createdAt || new Date().toISOString(),
+              };
+              set({ user: u, isAuthed: true });
+              if (typeof localStorage !== "undefined") {
+                localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(u));
+              }
+            }
+          }
+        });
+      }
     },
 
     setView: (view: ViewKey) => set({ view }),

@@ -24,6 +24,7 @@ interface SearchResult {
 export function TopBar() {
   const user = useApp((s) => s.user);
   const signOut = useApp((s) => s.signOut);
+  const openAuth = useApp((s) => s.openAuth);
   const setView = useApp((s) => s.setView);
   const toggleTheme = useApp((s) => s.toggleTheme);
   const theme = useApp((s) => s.theme);
@@ -366,13 +367,26 @@ export function TopBar() {
               <Icon name="ChevronDown" className="w-3.5 h-3.5 text-muted-foreground hidden sm:block" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuContent align="end" className="w-64">
             <DropdownMenuLabel>
-              <div className="text-sm font-semibold">{user?.name}</div>
-              <div className="text-xs text-muted-foreground font-normal">{user?.email}</div>
-              <div className="text-[10px] text-muted-foreground mt-1 capitalize">{user?.provider} · {user?.role.replace("_", " ")}</div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold truncate">{user?.name || "Active User"}</div>
+                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Firebase
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground font-normal truncate mt-0.5">{user?.email || "Connected"}</div>
+              <div className="text-[10px] text-muted-foreground mt-1 capitalize flex items-center gap-1">
+                <span className="font-medium text-foreground/80">{user?.provider === "google" ? "Google Account" : user?.provider === "anonymous" ? "Guest Mode" : "Verified Account"}</span>
+                <span>·</span>
+                <span>{user?.role ? user.role.replace("_", " ") : "Member"}</span>
+              </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={openAuth}>
+              <Icon name="UserCheck" className="w-4 h-4 mr-2" /> Switch or link account
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setView("settings")}>
               <Icon name="Settings" className="w-4 h-4 mr-2" /> Account settings
             </DropdownMenuItem>
@@ -381,10 +395,6 @@ export function TopBar() {
             </DropdownMenuItem>
             <DropdownMenuItem onClick={toggleTheme}>
               <Icon name={theme === "light" ? "Moon" : "Sun"} className="w-4 h-4 mr-2" /> {theme === "light" ? "Dark mode" : "Light mode"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setView("settings")} className="gap-2">
-              <Icon name="KeyRound" className="w-4 h-4 mr-2" /> Change password
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive">

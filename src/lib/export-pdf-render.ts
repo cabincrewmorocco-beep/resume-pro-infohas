@@ -6,6 +6,7 @@
  */
 import { jsPDF as JsPdfClass } from "jspdf";
 import * as jspdfModule from "jspdf";
+type jsPDF = JsPdfClass;
 const jsPDF: typeof JsPdfClass = (jspdfModule as any).jsPDF || (jspdfModule as any).default || JsPdfClass || (jspdfModule as any);
 import type {
   RenderDocument,

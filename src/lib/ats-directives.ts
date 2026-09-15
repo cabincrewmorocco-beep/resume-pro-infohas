@@ -1059,10 +1059,10 @@ export function resumeToDirectiveHtml(r: ResumeData, opts?: { bodyAlignment?: st
 
   // Experience
   if (r.experience.length) {
-    parts.push(`<h3>EXPERIENCE</h3>`);
+    parts.push(`<h3>PROFESSIONAL EXPERIENCE</h3>`);
     for (const e of r.experience) {
       const dateStr = `${fmtDate(e.startDate)} to ${fmtDate(e.endDate)}`;
-      parts.push(`<h4><strong>${escapeHtml(e.title)}</strong> | <strong>${escapeHtml(e.company)}</strong>${e.location ? ", " + escapeHtml(e.location) : ""} | <strong>${escapeHtml(dateStr)}</strong></h4>`);
+      parts.push(`<h4><strong>${escapeHtml(e.title)}</strong> | <strong>${escapeHtml(e.company)}</strong>${e.location ? " | " + escapeHtml(e.location) : ""} | <strong>${escapeHtml(dateStr)}</strong></h4>`);
       if (e.bullets.length) {
         parts.push(`<ul style="text-align:${alignFor("professionalExperience")}">${e.bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`);
       }
@@ -1071,10 +1071,10 @@ export function resumeToDirectiveHtml(r: ResumeData, opts?: { bodyAlignment?: st
 
   // Education
   if (r.education.length) {
-    parts.push(`<h3>EDUCATION</h3>`);
+    parts.push(`<h3>EDUCATION & PROFESSIONAL DEVELOPMENT</h3>`);
     for (const ed of r.education) {
       const dateStr = `${fmtDate(ed.startDate)} to ${fmtDate(ed.endDate)}`;
-      parts.push(`<h4><strong>${escapeHtml(ed.degree)}${ed.field ? " in " + escapeHtml(ed.field) : ""}</strong> | <strong>${escapeHtml(ed.institution)}</strong> | <strong>${escapeHtml(dateStr)}</strong></h4>`);
+      parts.push(`<h4><strong>${escapeHtml(ed.degree)}${ed.field ? " in " + escapeHtml(ed.field) : ""}</strong> | <strong>${escapeHtml(ed.institution)}</strong>${ed.location ? " | " + escapeHtml(ed.location) : ""} | <strong>${escapeHtml(dateStr)}</strong></h4>`);
       if (ed.highlights?.length) {
         parts.push(`<ul style="text-align:${alignFor("education")}">${ed.highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("")}</ul>`);
       }
@@ -1083,12 +1083,12 @@ export function resumeToDirectiveHtml(r: ResumeData, opts?: { bodyAlignment?: st
 
   // Skills
   if (r.skills.length) {
-    parts.push(`<h3>SKILLS</h3><p style="text-align:${alignFor("skills")}">${r.skills.map((s) => `<strong>${escapeHtml(s.name)}</strong>${s.category ? ` (${escapeHtml(s.category)})` : ""}`).join(", ")}</p>`);
+    parts.push(`<h3>CORE COMPETENCIES & SKILLS</h3><p style="text-align:${alignFor("skills")}">${r.skills.map((s) => `<strong>${escapeHtml(s.name)}</strong>${s.category ? ` (${escapeHtml(s.category)})` : ""}`).join(", ")}</p>`);
   }
 
   // Languages
   if (r.languages.length) {
-    parts.push(`<h3>LANGUAGES</h3><p style="text-align:${alignFor("languages")}">${r.languages.map((l) => `<strong>${escapeHtml(l.name)}</strong>: ${escapeHtml(l.proficiency)}`).join(", ")}</p>`);
+    parts.push(`<h3>LANGUAGES</h3><p style="text-align:${alignFor("languages")}">${r.languages.map((l) => `<strong>${escapeHtml(l.name)}</strong>${l.proficiency ? ` (${escapeHtml(l.proficiency)})` : ""}`).join(", ")}</p>`);
   }
 
   // Certifications

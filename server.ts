@@ -54,8 +54,8 @@ async function startServer() {
       if (isWorkersAITest) {
         const selectedModel = model || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
         const t0 = Date.now();
-        const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
-        const cfApiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || apiKey;
+        const cfAccountId = req.body.accountId || req.body.cfAccountId;
+        const cfApiToken = req.body.apiToken || apiKey;
 
         if (cfAccountId && cfApiToken) {
           try {
@@ -328,8 +328,8 @@ async function startServer() {
 
       if (isWorkersAIChat) {
         const selectedModel = model || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-        const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
-        const cfApiToken = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || apiKey;
+        const cfAccountId = req.body.accountId || req.body.cfAccountId;
+        const cfApiToken = req.body.apiToken || apiKey;
 
         if (cfAccountId && cfApiToken) {
           try {

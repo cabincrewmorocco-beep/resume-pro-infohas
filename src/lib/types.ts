@@ -187,6 +187,7 @@ export interface ResumeData {
   templateId?: string;
   atsScore?: number;
   source?: string;
+  parentResumeId?: string;
   createdAt?: string;
   updatedAt?: string;
   [key: string]: unknown;

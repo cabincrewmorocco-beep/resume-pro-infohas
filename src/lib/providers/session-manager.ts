@@ -288,54 +288,33 @@ export async function getAllSessions(): Promise<ProviderSession[]> {
 // Cloud persistence (D1 via Worker API)
 // ============================================================================
 
-const CLOUD_API_BASE =
-  (typeof window !== "undefined" && (window as any).__CLOUD_API_BASE) ||
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_CLOUD_API_BASE) ||
-  (typeof window !== "undefined" &&
-  typeof window.location !== "undefined" &&
-  typeof window.location.hostname === "string" &&
-  window.location.hostname === "localhost"
-    ? "http://localhost:8787"
-    : "https://resumeai-pro-api.rachidelsabah.workers.dev");
+import { api } from "@/lib/cloud-api";
 
 async function persistToCloud(session: ProviderSession): Promise<void> {
   if (typeof window === "undefined") return;
   try {
-    await fetch(`${CLOUD_API_BASE}/api/provider-sessions/${session.provider}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(session),
-    });
+    await api.putProviderSession(session.provider, session);
   } catch (persistErr) {
-    console.warn("[SessionManager] Cloud persist failed:", persistErr instanceof Error ? persistErr.message : persistErr);
+    console.warn("[SessionManager] Local persist failed:", persistErr instanceof Error ? persistErr.message : persistErr);
   }
 }
 
 async function loadFromCloud(provider: string): Promise<ProviderSession | null> {
   if (typeof window === "undefined") return null;
   try {
-    const res = await fetch(`${CLOUD_API_BASE}/api/provider-sessions/${provider}`);
-    if (res.ok) {
-      // The worker returns an envelope { ok, session, sessions } — unwrap it.
-      // Returning the raw envelope as a session made loadSession() see
-      // authenticated=undefined (→ treated as logged out) and saveSession()
-      // re-persist the envelope itself, corrupting localStorage AND D1.
-      const data: any = await res.json().catch(() => null);
-      return data?.session ?? null;
-    }
+    const res = await api.getProviderSession(provider);
+    return res?.session ?? null;
   } catch (loadErr) {
-    console.warn("[SessionManager] Cloud load failed:", loadErr instanceof Error ? loadErr.message : loadErr);
+    console.warn("[SessionManager] Local load warning:", loadErr instanceof Error ? loadErr.message : loadErr);
+    return null;
   }
-  return null;
 }
 
 async function clearFromCloud(provider: string): Promise<void> {
   if (typeof window === "undefined") return;
   try {
-    await fetch(`${CLOUD_API_BASE}/api/provider-sessions/${provider}`, {
-      method: "DELETE",
-    });
+    await api.putProviderSession(provider, null);
   } catch (deleteErr) {
-    console.warn("[SessionManager] Cloud delete failed:", deleteErr instanceof Error ? deleteErr.message : deleteErr);
+    console.warn("[SessionManager] Local delete warning:", deleteErr instanceof Error ? deleteErr.message : deleteErr);
   }
 }

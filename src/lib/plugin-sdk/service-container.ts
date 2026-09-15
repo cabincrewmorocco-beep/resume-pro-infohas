@@ -85,18 +85,6 @@ export function buildContainer(env: Record<string, unknown>): ServiceContainer {
   // Bind storage providers
   container.bind('env', () => env);
 
-  // D1 Storage
-  if (env.DB) {
-    // container.bind<IStorageProvider>('storage.d1', () => new D1StorageProvider(env.DB));
-    // Will be uncommented when D1StorageProvider implements IStorageProvider
-  }
-
-  // KV Storage
-  if (env.CACHE) {
-    // container.bind<IStorageProvider>('storage.kv', () => new KVStorageProvider(env.CACHE));
-    // Will be uncommented when KVStorageProvider implements IStorageProvider
-  }
-
   // Event bus (shared instance per request)
   // container.bind('eventBus', () => new EventBus());
 

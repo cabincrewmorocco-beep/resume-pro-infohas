@@ -356,22 +356,13 @@ function updateAgent(id: AgentId, patch: Partial<AgentState>): void {
 //
 // No Durable Objects, no WebSockets — pure D1 + polling.
 
-const TASK_API_BASE_URL =
-  typeof window !== "undefined" &&
-  typeof window.location !== "undefined" &&
-  typeof window.location.hostname === "string" &&
-  window.location.hostname === "localhost"
-    ? "http://localhost:8787"
-    : "https://resumeai-pro-api.rachidelsabah.workers.dev";
+import { createTask, updateTaskProgress } from "@/hooks/useTaskPolling";
 
 let activePipelineId: string | null = null;
-// Server-generated D1 task id ("task_...") returned by POST /api/tasks/create.
-// PATCHes must target THIS id — the local pipelineId is unknown to the worker
-// and previously every status PATCH was a silent 0-row no-op.
 let activeD1TaskId: string | null = null;
 
 /**
- * The D1 task id for the active run (null when task creation failed/offline).
+ * The task id for the active run (null when task creation failed/offline).
  * Read by the durable pipeline runner to anchor pipeline_jobs rows to the run.
  */
 export function getActiveD1TaskId(): string | null {
@@ -404,27 +395,20 @@ export async function initPipelineTask(pipelineId: string): Promise<void> {
   if (typeof window === "undefined") return;
 
   try {
-    const res = await fetch(`${TASK_API_BASE_URL}/api/tasks/create`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "optimization",
-        message: "Initializing pipeline",
-      }),
+    const res = await createTask({
+      type: "optimization",
+      message: "Initializing pipeline",
     });
-    // Capture the server-generated task id so status PATCHes below hit the
-    // row that was actually created (previously discarded → stuck "queued").
-    const data: any = await res.json().catch(() => null);
-    if (data?.ok && data?.task?.id) {
-      activeD1TaskId = data.task.id;
+    if (res?.ok && res?.task?.id) {
+      activeD1TaskId = res.task.id;
     }
   } catch (e) {
-    console.warn("[Supervisor] Failed to init D1 task:", e);
+    console.warn("[Supervisor] Local task init warning:", e);
   }
 }
 
 /**
- * Report an agent status change to D1. Fire-and-forget.
+ * Report an agent status change locally. Fire-and-forget.
  */
 async function reportAgentStatusToD1(
   agentId: AgentId,
@@ -460,26 +444,17 @@ async function reportAgentStatusToD1(
   };
 
   try {
-    await fetch(`${TASK_API_BASE_URL}/api/tasks/${d1TaskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: status === "completed" || status === "cached" ? "completed" : status === "failed" ? "failed" : "running",
-        progress: progressMap[status],
-        message: messageMap[status],
-        error: patch.error,
-      }),
+    await updateTaskProgress(d1TaskId, {
+      status: status === "completed" || status === "cached" ? "completed" : status === "failed" ? "failed" : "running",
+      progress: progressMap[status],
+      message: messageMap[status],
+      error: patch.error,
     });
-  } catch (e) {
-    // Non-fatal: D1 task tracking is best-effort. Log in dev only to avoid console spam.
-    if (process.env.NODE_ENV !== "production") {
-      console.debug("[supervisor] D1 agent status report failed (non-fatal):", agentId, status, e instanceof Error ? e.message : e);
-    }
-  }
+  } catch {}
 }
 
 /**
- * Mark the pipeline as complete in D1. Fire-and-forget.
+ * Mark the pipeline as complete locally. Fire-and-forget.
  */
 export async function completePipelineTask(
   finalStatus: "completed" | "failed",
@@ -489,18 +464,14 @@ export async function completePipelineTask(
   if (typeof window === "undefined" || !activePipelineId) return;
 
   try {
-    await fetch(`${TASK_API_BASE_URL}/api/tasks/${activeD1TaskId || activePipelineId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: finalStatus,
-        progress: 100,
-        message: summary,
-        result: { durationMs, finalStatus },
-      }),
+    await updateTaskProgress(activeD1TaskId || activePipelineId, {
+      status: finalStatus,
+      progress: 100,
+      message: summary,
+      result: { durationMs, finalStatus },
     });
   } catch (e) {
-    console.warn("[Supervisor] Failed to complete D1 task:", e);
+    console.warn("[Supervisor] Local task completion warning:", e);
   } finally {
     activePipelineId = null;
     activeD1TaskId = null;

@@ -231,13 +231,18 @@ export function Dashboard() {
                   className="group text-left rounded-xl border border-border bg-card p-4 hover:shadow-premium hover:-translate-y-0.5 transition-all"
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm font-semibold truncate">{r.name}</div>
-                    <Badge variant="outline" className="text-[10px]">{template?.name ?? r.template}</Badge>
+                    <div className="text-sm font-semibold truncate mr-2" title={r.title || r.name}>{r.title || r.name}</div>
+                    <Badge variant={r.source === "ai-optimized" ? "brand" : r.source === "upload" ? "gold" : "outline"} className="text-[10px] capitalize shrink-0">
+                      {r.source === "ai-optimized" ? "Optimized" : r.source === "upload" ? "Uploaded" : (template?.name ?? r.template)}
+                    </Badge>
                   </div>
+                  {r.title && r.name && r.title !== r.name && (
+                    <div className="text-xs text-muted-foreground truncate mb-1">{r.name}</div>
+                  )}
                   {r.headline && <div className="text-xs text-muted-foreground truncate">{r.headline}</div>}
                   <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><Icon name="Briefcase" className="w-3 h-3" /> {r.experience.length} exp</span>
-                    <span className="flex items-center gap-1"><Icon name="Wrench" className="w-3 h-3" /> {r.skills.length} skills</span>
+                    <span className="flex items-center gap-1"><Icon name="Briefcase" className="w-3 h-3" /> {(r.experience || []).length} exp</span>
+                    <span className="flex items-center gap-1"><Icon name="Wrench" className="w-3 h-3" /> {(r.skills || []).length} skills</span>
                   </div>
                   <div className="mt-3 text-xs text-brand font-medium flex items-center gap-1">
                     Open builder <Icon name="ArrowRight" className="w-3 h-3 group-hover:translate-x-0.5 transition" />

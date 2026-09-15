@@ -771,8 +771,14 @@ Guidelines:
     setParsingText(true);
     try {
       const parsed = await parseResumeText(pasteText);
-      setResume(parsed);
-      addResume(parsed);
+      const originalEntry: ResumeData = {
+        ...parsed,
+        source: "upload",
+        title: parsed.title || `${parsed.name || "Resume"} (Pasted Resume)`,
+        updatedAt: new Date().toISOString(),
+      };
+      setResume(originalEntry);
+      addResume(originalEntry);
       toast.success("Parsed pasted resume successfully");
       setStep("jd");
     } catch (e: any) {
@@ -808,8 +814,15 @@ Guidelines:
     if (!files?.[0]) return;
     try {
       const parsed = await parseResumeFile(files[0]);
-      setResume(parsed);
-      addResume(parsed);
+      const originalEntry: ResumeData = {
+        ...parsed,
+        source: "upload",
+        title: parsed.title || `${parsed.name || "Resume"} (Uploaded Resume)`,
+        fileName: files[0].name,
+        updatedAt: new Date().toISOString(),
+      };
+      setResume(originalEntry);
+      addResume(originalEntry);
       toast.success(`Parsed ${files[0].name}`);
       setStep("jd");
     } catch (e: any) {
@@ -1178,10 +1191,28 @@ Guidelines:
 
       setPipelineResult(result);
 
-      // Map pipeline result → local state
+      // Map pipeline result → local state & library
       if (result.optimizedResume) {
-        setOptimizedResume(result.optimizedResume);
-        addResume(result.optimizedResume);
+        const targetTitle = jdParsed?.title ? `Tailored for ${jdParsed.title}` : "Optimized Resume";
+        const optId = (result.optimizedResume.id && result.optimizedResume.id !== resume.id)
+          ? result.optimizedResume.id
+          : uid("opt");
+
+        const optimizedEntry: ResumeData = {
+          ...result.optimizedResume,
+          id: optId,
+          parentResumeId: resume.id,
+          source: "ai-optimized",
+          title: `${resume.name || "Resume"} (${targetTitle})`,
+          targetRole: jdParsed?.title || result.optimizedResume.targetRole || resume.targetRole,
+          createdAt: result.optimizedResume.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        setOptimizedResume(optimizedEntry);
+        // Preserve both the original uploaded resume and the optimized variant in store and database
+        addResume(resume);
+        addResume(optimizedEntry);
       }
 
       // Map the richer ATSAnalysisResult back to the legacy ATSReport shape
@@ -1467,8 +1498,25 @@ Guidelines:
     if (firstSuccess) {
       setPipelineResult(firstSuccess);
       if (firstSuccess.optimizedResume) {
-        setOptimizedResume(firstSuccess.optimizedResume);
-        addResume(firstSuccess.optimizedResume);
+        const targetTitle = jdParsed?.title ? `Tailored for ${jdParsed.title}` : "Optimized Resume";
+        const optId = (firstSuccess.optimizedResume.id && firstSuccess.optimizedResume.id !== resume.id)
+          ? firstSuccess.optimizedResume.id
+          : uid("opt");
+
+        const optimizedEntry: ResumeData = {
+          ...firstSuccess.optimizedResume,
+          id: optId,
+          parentResumeId: resume.id,
+          source: "ai-optimized",
+          title: `${resume.name || "Resume"} (${targetTitle})`,
+          targetRole: jdParsed?.title || firstSuccess.optimizedResume.targetRole || resume.targetRole,
+          createdAt: firstSuccess.optimizedResume.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        setOptimizedResume(optimizedEntry);
+        addResume(resume);
+        addResume(optimizedEntry);
       }
       if (firstSuccess.afterATS && firstSuccess.optimizedResume) {
         const after = scoreATS(firstSuccess.optimizedResume, jdParsed);
@@ -1649,15 +1697,34 @@ Guidelines:
               </Tabs>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-lg">Or pick from your library</CardTitle><CardDescription>{resumes.length} resumes available</CardDescription></CardHeader>
-              <CardContent className="space-y-2">
+              <CardHeader><CardTitle className="text-lg">Or pick from your library</CardTitle><CardDescription>{resumes.length} saved {resumes.length === 1 ? "resume" : "resumes"} in library</CardDescription></CardHeader>
+              <CardContent className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
                 {resumes.map((r) => (
-                  <button key={r.id} onClick={() => pickExisting(r.id)} className="w-full text-left rounded-lg border border-border p-3 hover:border-brand hover:bg-brand-light/30 transition">
-                    <div className="font-semibold text-sm">{r.name}</div>
-                    {r.headline && <div className="text-xs text-muted-foreground">{r.headline}</div>}
+                  <button key={r.id} onClick={() => pickExisting(r.id)} className="w-full text-left rounded-lg border border-border p-3 hover:border-brand hover:bg-brand-light/30 transition group">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-sm truncate text-foreground group-hover:text-brand transition">{r.title || r.name}</div>
+                      <Badge variant={r.source === "ai-optimized" ? "brand" : r.source === "upload" ? "gold" : "outline"} className="text-[10px] capitalize shrink-0">
+                        {r.source === "ai-optimized" ? "Optimized" : r.source === "upload" ? "Uploaded" : (r.source?.replace("-", " ") || "Draft")}
+                      </Badge>
+                    </div>
+                    {r.title && r.name && r.title !== r.name && (
+                      <div className="text-xs text-muted-foreground truncate">{r.name}</div>
+                    )}
+                    {r.headline && <div className="text-xs text-muted-foreground truncate mt-0.5">{r.headline}</div>}
+                    <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
+                      <span>{(r.experience || []).length} exp</span>
+                      <span>•</span>
+                      <span>{(r.skills || []).length} skills</span>
+                      {r.updatedAt && (
+                        <>
+                          <span>•</span>
+                          <span>Updated {new Date(r.updatedAt).toLocaleDateString()}</span>
+                        </>
+                      )}
+                    </div>
                   </button>
                 ))}
-                {resumes.length === 0 && <div className="text-sm text-muted-foreground text-center py-4">No resumes yet. Upload one to start.</div>}
+                {resumes.length === 0 && <div className="text-sm text-muted-foreground text-center py-6">No resumes yet. Upload or paste one on the left to start.</div>}
               </CardContent>
             </Card>
           </motion.div>
