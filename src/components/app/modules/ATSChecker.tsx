@@ -22,6 +22,7 @@ export function ATSChecker() {
   const [resumeId, setResumeId] = useState<string>(resumes[0]?.id ?? "");
   const [jdId, setJdId] = useState<string>("none");
   const [running, setRunning] = useState(false);
+  const [parsingFile, setParsingFile] = useState(false);
   const [report, setReport] = useState<ReturnType<typeof scoreATS> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -59,6 +60,7 @@ export function ATSChecker() {
   const onUpload = async (files: FileList | null) => {
     if (!files?.[0]) return;
     const file = files[0];
+    setParsingFile(true);
     try {
       const parsed = await parseResumeFile(file);
       useApp.getState().addResume(parsed);
@@ -67,6 +69,7 @@ export function ATSChecker() {
     } catch (e: any) {
       toast.error(e?.message || "Parse failed.");
     } finally {
+      setParsingFile(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -107,8 +110,9 @@ export function ATSChecker() {
                 <option key={r.id} value={r.id}>{r.name} {r.headline ? `— ${r.headline}` : ""}</option>
               ))}
             </select>
-            <Button variant="outline" className="w-full gap-2" onClick={() => fileRef.current?.click()}>
-              <Icon name="Upload" className="w-4 h-4" /> Upload new (PDF/DOCX/TXT)
+            <Button variant="outline" className="w-full gap-2" disabled={parsingFile} onClick={() => fileRef.current?.click()}>
+              {parsingFile ? <Icon name="Loader2" className="w-4 h-4 animate-spin text-brand" /> : <Icon name="Upload" className="w-4 h-4" />}
+              {parsingFile ? "Parsing & Sanitizing file..." : "Upload new (PDF/DOCX/TXT)"}
             </Button>
             <input ref={fileRef} type="file" accept=".pdf,.docx,.txt" className="hidden" onChange={(e) => onUpload(e.target.files)} />
           </CardContent>

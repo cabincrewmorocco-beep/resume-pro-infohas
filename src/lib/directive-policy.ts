@@ -19,6 +19,16 @@ import type { OptimizerDirectiveConfig, ResumeData } from "./types";
 export interface OptimizationPolicy {
   version: string;
 
+  // === CUSTOM DIRECTIVE OVERRIDE & BLUEPRINT ===
+  customDirectiveOverride?: string;
+  activeBlueprintName?: string;
+  margins?: {
+    topMm: number;
+    bottomMm: number;
+    marginLeftMm: number;
+    marginRightMm: number;
+  };
+
   // === LAYOUT ===
   pageLimit: "one-page" | "two-page" | "auto";
   layoutTemplate: "preserve-original" | "modern" | "professional";
@@ -186,6 +196,16 @@ export function buildOptimizationPolicy(
   return {
     version: POLICY_VERSION,
 
+    // Custom Directive Override & Active Blueprint
+    customDirectiveOverride: directiveConfig?.customDirectiveOverride?.trim() || undefined,
+    activeBlueprintName: (directiveConfig as any)?.activeBlueprint || (directiveConfig as any)?.name || "Aviation ATS Blueprint",
+    margins: {
+      topMm: directiveConfig?.marginTopMm ?? 12,
+      bottomMm: directiveConfig?.marginBottomMm ?? 12,
+      marginLeftMm: directiveConfig?.marginLeftMm ?? 15,
+      marginRightMm: directiveConfig?.marginRightMm ?? 15,
+    },
+
     // Layout
     pageLimit: directiveConfig?.enforceOnePage ? "one-page" : "auto",
     layoutTemplate: "preserve-original",
@@ -292,6 +312,40 @@ export function buildOptimizationPolicy(
  */
 export function formatPolicyForPrompt(policy: OptimizationPolicy): string {
   const lines: string[] = [];
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CRITICAL SYSTEM INSTRUCTION — NON-NEGOTIABLE POLICY (HIGHEST PRIORITY)
+  // ═══════════════════════════════════════════════════════════════════════════
+  lines.push("╔═══════════════════════════════════════════════════════════════════════════╗");
+  lines.push("║           CRITICAL SYSTEM INSTRUCTION — NON-NEGOTIABLE POLICY             ║");
+  lines.push("╚═══════════════════════════════════════════════════════════════════════════╝");
+
+  if (policy.customDirectiveOverride && policy.customDirectiveOverride.trim()) {
+    lines.push("");
+    lines.push(">>> USER CUSTOM DIRECTIVE OVERRIDE (HIGHEST PRIORITY — ABSOLUTE CEILING) <<<");
+    lines.push(policy.customDirectiveOverride.trim());
+    lines.push(">>> END USER CUSTOM DIRECTIVE OVERRIDE <<<");
+    lines.push("");
+  }
+
+  lines.push("=== ACTIVE BLUEPRINT & DIRECTIVE PARAMETERS ===");
+  lines.push(`• Active Blueprint: ${policy.activeBlueprintName || "Aviation ATS Blueprint"}`);
+  lines.push(`• Page Budget / Hard Limit: ${policy.pageLimit === "one-page" ? "EXACTLY 1 Page (A4 - 842pt hard budget)" : policy.pageLimit}`);
+  lines.push(`• Margins: Top: ${policy.margins?.topMm ?? 12}mm, Bottom: ${policy.margins?.bottomMm ?? 12}mm, Left: ${policy.margins?.marginLeftMm ?? 15}mm, Right: ${policy.margins?.marginRightMm ?? 15}mm`);
+  lines.push(`• Word Limits: Professional Summary MUST be strictly between ${policy.summaryMinWords} and ${policy.summaryMaxWords} words.`);
+  lines.push(`• Typography: Body Font Size ${policy.fontSize}pt, Line Height ${policy.lineHeight}`);
+  lines.push(`• Power Verbs: ${policy.enforcePowerVerbs ? "MANDATORY — Every single bullet must begin with a strong active power verb (no passive voice, no filler)" : "Recommended"}`);
+  if (policy.experienceFormula && policy.experienceFormula !== "auto") {
+    lines.push(`• Experience Formula: MANDATORY ${policy.experienceFormula.toUpperCase()} formula ([Action Verb] + [Context/Task] + [Measurable Outcome/Impact])`);
+  }
+  if (policy.forbiddenKeywords && policy.forbiddenKeywords.length > 0) {
+    lines.push(`• Forbidden Skills / Keywords (NEVER use these): ${policy.forbiddenKeywords.join(", ")}`);
+  }
+  lines.push("• Banned Phrasing: Zero tolerance for generic buzzwords or passive filler ('responsible for', 'duties included', 'helped with', 'team player', 'synergy', 'detail-oriented', 'results-driven', etc.).");
+  lines.push("• Anti-Hallucination Gate: NEVER invent companies, degrees, dates, languages, or specialized technical tools without source grounding.");
+  lines.push("=== END ACTIVE BLUEPRINT PARAMETERS ===");
+  lines.push("");
+
   lines.push("=== SYSTEM POLICY ===");
   lines.push(`Version: ${policy.version}`);
   lines.push(`Page Limit: ${policy.pageLimit}`);

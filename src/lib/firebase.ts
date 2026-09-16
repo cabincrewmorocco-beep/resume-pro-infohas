@@ -1,7 +1,5 @@
 // ============================================================================
-// Firebase SDK & Firestore Persistence Engine
-// Provides Native Firebase Authentication & Cloud Firestore (`users/{userId}/*`)
-// With 100% Graceful Offline / LocalStorage / IndexedDB Fallback
+// ResumeAI Pro — Firebase Auth & Firestore Client Integration
 // ============================================================================
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
@@ -12,9 +10,11 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   signInAnonymously,
-  signOut as fbSignOut,
+  signOut,
   onAuthStateChanged,
   updateProfile,
+  setPersistence,
+  browserLocalPersistence,
   type Auth,
   type User as FirebaseUser,
 } from "firebase/auth";
@@ -25,125 +25,110 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
-  query,
-  orderBy,
   type Firestore,
 } from "firebase/firestore";
+import { getAllResumesFromDB, getAllApplicationsFromDB } from "./resume-db";
 
-import firebaseConfigJson from "../../firebase-applet-config.json";
-import type { ResumeData } from "./types";
-import type { ApplicationRecord } from "./applications-logic";
-import {
-  getAllResumesFromDB,
-  saveResumeToDB,
-  deleteResumeFromDB,
-  getAllApplicationsFromDB,
-  saveApplicationToDB,
-  deleteApplicationFromDB,
-  getAllCoverLettersFromDB,
-  saveCoverLetterToDB,
-  deleteCoverLetterFromDB,
-  getAllJDsFromDB,
-  saveJDToDB,
-  deleteJDFromDB,
-  getAllATSReportsFromDB,
-  saveATSReportToDB,
-} from "./resume-db";
-
-// ---------------------------------------------------------------------------
-// 1. Initialization
-// ---------------------------------------------------------------------------
+const metaEnv = (import.meta as any).env || {};
+const firebaseConfig = {
+  apiKey: metaEnv.VITE_FIREBASE_API_KEY || "AIzaSyDummyKeyForGracefulInitializationClientSide",
+  authDomain: metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "infohas-ats-pro.firebaseapp.com",
+  projectId: metaEnv.VITE_FIREBASE_PROJECT_ID || "ai-studio-infohasatspro-ef38e692-9712-4295-b102-60af70e3c8ec",
+  storageBucket: metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "infohas-ats-pro.appspot.com",
+  messagingSenderId: metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "604352585869",
+  appId: metaEnv.VITE_FIREBASE_APP_ID || "1:604352585869:web:abcdef123456",
+};
 
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
-let isFirebaseInitialized = false;
+let googleProvider: GoogleAuthProvider | null = null;
 
 try {
-  const config = firebaseConfigJson;
-  if (config && config.apiKey && config.projectId) {
-    if (!getApps().length) {
-      app = initializeApp(config);
-    } else {
-      app = getApp();
-    }
+  if (typeof window !== "undefined") {
+    app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
 
-    if (app) {
-      auth = getAuth(app);
-      // Support custom firestoreDatabaseId if configured in project
-      if (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") {
-        db = getFirestore(app, config.firestoreDatabaseId);
-      } else {
-        db = getFirestore(app);
-      }
-      isFirebaseInitialized = true;
-    }
+    // Initialize Google Auth Provider with custom parameters & standard scopes
+    googleProvider = new GoogleAuthProvider();
+    googleProvider.setCustomParameters({ prompt: "select_account" });
+    googleProvider.addScope("email");
+    googleProvider.addScope("profile");
+
+    // Configure persistent local storage session in browser
+    setPersistence(auth, browserLocalPersistence).catch((persistErr) => {
+      console.warn("[Firebase Auth] setPersistence initial warning:", persistErr);
+    });
   }
-} catch (initErr) {
-  console.warn("[Firebase] Initialization error, using offline local fallback:", initErr);
-  isFirebaseInitialized = false;
+} catch (err) {
+  console.warn("[Firebase] Initializing client-side Firebase gracefully:", err);
 }
 
-export { app, auth, db, isFirebaseInitialized };
+export { app, auth, db, googleProvider };
 
 export function isFirebaseReady(): boolean {
-  return Boolean(isFirebaseInitialized && auth && db);
+  return !!auth && !!db;
 }
 
-// ---------------------------------------------------------------------------
-// 2. Authentication API (Email/Password, Google Popup, Guest/Anonymous)
-// ---------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Authentication Handlers
+// ----------------------------------------------------------------------------
 
-export async function loginWithEmail(email: string, pass: string) {
-  if (!auth) {
-    throw new Error("Firebase Auth is not initialized. Using local offline mode.");
-  }
-  const credential = await signInWithEmailAndPassword(auth, email.trim(), pass);
-  return credential.user;
+export async function loginWithEmail(email: string, pass: string): Promise<FirebaseUser> {
+  if (!auth) throw new Error("Firebase Auth is not ready.");
+  const cred = await signInWithEmailAndPassword(auth, email, pass);
+  return cred.user;
 }
 
-export async function registerWithEmail(email: string, pass: string, displayName?: string) {
-  if (!auth) {
-    throw new Error("Firebase Auth is not initialized. Using local offline mode.");
+export async function registerWithEmail(email: string, pass: string, name?: string): Promise<FirebaseUser> {
+  if (!auth) throw new Error("Firebase Auth is not ready.");
+  const cred = await createUserWithEmailAndPassword(auth, email, pass);
+  if (name && cred.user) {
+    await updateProfile(cred.user, { displayName: name }).catch(() => {});
   }
-  const credential = await createUserWithEmailAndPassword(auth, email.trim(), pass);
-  if (displayName && credential.user) {
+  return cred.user;
+}
+
+export async function loginWithGoogle(): Promise<FirebaseUser | null> {
+  if (!auth) throw new Error("Firebase Auth is not ready.");
+  try {
+    if (!googleProvider) {
+      googleProvider = new GoogleAuthProvider();
+      googleProvider.setCustomParameters({ prompt: "select_account" });
+      googleProvider.addScope("email");
+      googleProvider.addScope("profile");
+    }
+
+    // Ensure local persistence is verified before popup invocation
     try {
-      await updateProfile(credential.user, { displayName });
-    } catch {}
+      await setPersistence(auth, browserLocalPersistence);
+    } catch (persistErr) {
+      console.warn("[Firebase Auth] Popup persistence setup notice:", persistErr);
+    }
+
+    const cred = await signInWithPopup(auth, googleProvider);
+    return cred.user;
+  } catch (err: any) {
+    if (err?.code === "auth/popup-closed-by-user" || err?.code === "auth/cancelled-popup-request") {
+      return null;
+    }
+    throw err;
   }
-  return credential.user;
 }
 
-export async function loginWithGoogle() {
-  if (!auth) {
-    throw new Error("Firebase Auth is not initialized.");
-  }
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: "select_account" });
-  const credential = await signInWithPopup(auth, provider);
-  return credential.user;
+export async function loginAsGuest(): Promise<FirebaseUser> {
+  if (!auth) throw new Error("Firebase Auth is not ready.");
+  const cred = await signInAnonymously(auth);
+  return cred.user;
 }
 
-export async function loginAsGuest() {
-  if (!auth) {
-    throw new Error("Firebase Auth is not initialized.");
-  }
-  const credential = await signInAnonymously(auth);
-  return credential.user;
-}
-
-export async function logoutFirebaseUser() {
+export async function logoutFirebaseUser(): Promise<void> {
   if (!auth) return;
-  await fbSignOut(auth);
+  await signOut(auth);
 }
 
-export function onFirebaseAuthStateChanged(callback: (user: any) => void) {
-  if (!auth) return () => {};
-  return onAuthStateChanged(auth, callback);
-}
-
-export function onFirebaseAuthStateChange(callback: (user: FirebaseUser | null) => void) {
+export function onFirebaseAuthStateChanged(callback: (user: FirebaseUser | null) => void): () => void {
   if (!auth) {
     callback(null);
     return () => {};
@@ -151,213 +136,148 @@ export function onFirebaseAuthStateChange(callback: (user: FirebaseUser | null) 
   return onAuthStateChanged(auth, callback);
 }
 
-export function getActiveFirebaseUser(): FirebaseUser | null {
-  return auth?.currentUser ?? null;
-}
+// ----------------------------------------------------------------------------
+// Firestore Database Operations (User Scoped)
+// ----------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// 3. Firestore Direct Calls: Resumes (`users/{userId}/resumes`)
-// ---------------------------------------------------------------------------
-
-export async function getFirestoreResumes(userId: string): Promise<ResumeData[]> {
-  if (!db || !userId) {
-    return await getAllResumesFromDB();
-  }
-
+export async function getFirestoreResumes(userId: string): Promise<any[]> {
+  if (!db || !userId) return [];
   try {
-    const resumesRef = collection(db, "users", userId, "resumes");
-    const q = query(resumesRef, orderBy("createdAt", "desc"));
-    const snapshot = await getDocs(q);
-
-    if (snapshot.empty) {
-      // If Firestore has no documents yet, check local DB fallback
-      return await getAllResumesFromDB();
-    }
-
-    const results: ResumeData[] = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      results.push({
-        id: docSnap.id,
-        ...data,
-      } as ResumeData);
-    });
-
-    // Mirror to local DB for offline access
-    for (const r of results) {
-      saveResumeToDB(r).catch(() => {});
-    }
-
-    return results;
+    const colRef = collection(db, "users", userId, "resumes");
+    const snapshot = await getDocs(colRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
   } catch (err) {
-    console.warn("[Firebase] Failed to fetch resumes from Firestore, fallback to local DB:", err);
-    return await getAllResumesFromDB();
+    console.warn("[Firestore] Failed to read resumes:", err);
+    return [];
   }
 }
 
-export async function saveFirestoreResume(userId: string, resume: ResumeData): Promise<boolean> {
-  // Always save locally first so user never loses work
-  await saveResumeToDB(resume).catch(() => {});
-
-  if (!db || !userId || !resume.id) {
-    return true;
-  }
-
+export async function saveFirestoreResume(userId: string, resume: any): Promise<void> {
+  if (!db || !userId || !resume?.id) return;
   try {
-    const resumeRef = doc(db, "users", userId, "resumes", resume.id);
-    const payload = {
-      ...resume,
-      userId,
-      updatedAt: resume.updatedAt || new Date().toISOString(),
-      createdAt: resume.createdAt || new Date().toISOString(),
-    };
-    await setDoc(resumeRef, payload, { merge: true });
-    return true;
+    const docRef = doc(db, "users", userId, "resumes", resume.id);
+    await setDoc(docRef, { ...resume, updatedAt: new Date().toISOString() }, { merge: true });
   } catch (err) {
-    console.warn("[Firebase] Firestore saveResume failed, cached locally:", err);
-    return false;
+    console.warn("[Firestore] Failed to save resume:", err);
   }
 }
 
-export async function deleteFirestoreResume(userId: string, resumeId: string): Promise<boolean> {
-  await deleteResumeFromDB(resumeId).catch(() => {});
-
-  if (!db || !userId || !resumeId) {
-    return true;
-  }
-
+export async function deleteFirestoreResume(userId: string, resumeId: string): Promise<void> {
+  if (!db || !userId || !resumeId) return;
   try {
-    const resumeRef = doc(db, "users", userId, "resumes", resumeId);
-    await deleteDoc(resumeRef);
-    return true;
+    const docRef = doc(db, "users", userId, "resumes", resumeId);
+    await deleteDoc(docRef);
   } catch (err) {
-    console.warn("[Firebase] Firestore deleteResume error:", err);
-    return false;
+    console.warn("[Firestore] Failed to delete resume:", err);
   }
 }
 
-// ---------------------------------------------------------------------------
-// 4. Firestore Direct Calls: Applications (`users/{userId}/applications`)
-// ---------------------------------------------------------------------------
-
-export async function getFirestoreApplications(userId: string): Promise<ApplicationRecord[]> {
-  if (!db || !userId) {
-    return await getAllApplicationsFromDB();
-  }
-
+export async function getFirestoreApplications(userId: string): Promise<any[]> {
+  if (!db || !userId) return [];
   try {
-    const appsRef = collection(db, "users", userId, "applications");
-    const q = query(appsRef, orderBy("createdAt", "desc"));
-    const snapshot = await getDocs(q);
-
-    if (snapshot.empty) {
-      return await getAllApplicationsFromDB();
-    }
-
-    const list: ApplicationRecord[] = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      list.push({
-        id: docSnap.id,
-        ...data,
-      } as ApplicationRecord);
-    });
-
-    for (const app of list) {
-      saveApplicationToDB(app).catch(() => {});
-    }
-
-    return list;
+    const colRef = collection(db, "users", userId, "applications");
+    const snapshot = await getDocs(colRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
   } catch (err) {
-    console.warn("[Firebase] Firestore getApplications error, fallback to local DB:", err);
-    return await getAllApplicationsFromDB();
+    console.warn("[Firestore] Failed to read applications:", err);
+    return [];
   }
 }
 
-export async function saveFirestoreApplication(userId: string, application: ApplicationRecord): Promise<boolean> {
-  await saveApplicationToDB(application).catch(() => {});
-
-  if (!db || !userId || !application.id) {
-    return true;
-  }
-
+export async function saveFirestoreApplication(userId: string, appData: any): Promise<void> {
+  if (!db || !userId || !appData?.id) return;
   try {
-    const appRef = doc(db, "users", userId, "applications", application.id);
-    const payload = {
-      ...application,
-      userId,
-      updatedAt: application.updatedAt || new Date().toISOString(),
-      createdAt: application.createdAt || new Date().toISOString(),
-    };
-    await setDoc(appRef, payload, { merge: true });
-    return true;
+    const docRef = doc(db, "users", userId, "applications", appData.id);
+    await setDoc(docRef, { ...appData, updatedAt: new Date().toISOString() }, { merge: true });
   } catch (err) {
-    console.warn("[Firebase] Firestore saveApplication error:", err);
-    return false;
+    console.warn("[Firestore] Failed to save application:", err);
   }
 }
 
-export async function deleteFirestoreApplication(userId: string, applicationId: string): Promise<boolean> {
-  await deleteApplicationFromDB(applicationId).catch(() => {});
-
-  if (!db || !userId || !applicationId) {
-    return true;
-  }
-
+export async function deleteFirestoreApplication(userId: string, appId: string): Promise<void> {
+  if (!db || !userId || !appId) return;
   try {
-    const appRef = doc(db, "users", userId, "applications", applicationId);
-    await deleteDoc(appRef);
-    return true;
+    const docRef = doc(db, "users", userId, "applications", appId);
+    await deleteDoc(docRef);
   } catch (err) {
-    console.warn("[Firebase] Firestore deleteApplication error:", err);
-    return false;
+    console.warn("[Firestore] Failed to delete application:", err);
   }
 }
 
-// ---------------------------------------------------------------------------
-// 5. Cloud Firestore Synchronization helper
-// ---------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Directive Profiles Firestore Sync (users/{uid}/directive_profiles/{profileId})
+// ----------------------------------------------------------------------------
 
+export async function getFirestoreDirectiveProfiles(userId: string): Promise<any[]> {
+  if (!db || !userId) return [];
+  try {
+    const colRef = collection(db, "users", userId, "directive_profiles");
+    const snapshot = await getDocs(colRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  } catch (err) {
+    console.warn("[Firestore] Failed to read directive profiles:", err);
+    return [];
+  }
+}
+
+export async function saveFirestoreDirectiveProfile(userId: string, profile: any): Promise<void> {
+  if (!db || !userId || !profile?.id) return;
+  try {
+    const docRef = doc(db, "users", userId, "directive_profiles", profile.id);
+    await setDoc(docRef, { ...profile, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.warn("[Firestore] Failed to save directive profile:", err);
+  }
+}
+
+export async function deleteFirestoreDirectiveProfile(userId: string, profileId: string): Promise<void> {
+  if (!db || !userId || !profileId) return;
+  try {
+    const docRef = doc(db, "users", userId, "directive_profiles", profileId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn("[Firestore] Failed to delete directive profile:", err);
+  }
+}
+
+/**
+ * Background synchronization from local IndexedDB cache into Firestore for authenticated users
+ */
 export async function syncLocalDataToFirestore(userId: string): Promise<void> {
   if (!db || !userId) return;
-
   try {
-    // 1. Sync local resumes to Firestore if missing
-    const localResumes = await getAllResumesFromDB();
-    for (const resume of localResumes) {
-      if (resume && resume.id) {
-        const resumeRef = doc(db, "users", userId, "resumes", resume.id);
-        await setDoc(
-          resumeRef,
-          {
-            ...resume,
-            userId,
-            updatedAt: resume.updatedAt || new Date().toISOString(),
-            createdAt: resume.createdAt || new Date().toISOString(),
-          },
-          { merge: true }
-        ).catch(() => {});
+    const [localResumes, localApps] = await Promise.all([
+      getAllResumesFromDB(),
+      getAllApplicationsFromDB(),
+    ]);
+
+    for (const r of localResumes) {
+      if (r && r.id) {
+        await saveFirestoreResume(userId, r);
       }
     }
 
-    // 2. Sync local applications to Firestore
-    const localApps = await getAllApplicationsFromDB();
-    for (const appRecord of localApps) {
-      if (appRecord && appRecord.id) {
-        const appRef = doc(db, "users", userId, "applications", appRecord.id);
-        await setDoc(
-          appRef,
-          {
-            ...appRecord,
-            userId,
-            updatedAt: appRecord.updatedAt || new Date().toISOString(),
-            createdAt: appRecord.createdAt || new Date().toISOString(),
-          },
-          { merge: true }
-        ).catch(() => {});
+    for (const a of localApps) {
+      if (a && a.id) {
+        await saveFirestoreApplication(userId, a);
       }
     }
-  } catch (e) {
-    console.warn("[Firebase] Sync local to cloud non-fatal:", e);
+
+    // Sync any locally cached custom directive profiles
+    try {
+      const localCustom = localStorage.getItem("custom_directives_v1");
+      if (localCustom) {
+        const parsed = JSON.parse(localCustom);
+        if (Array.isArray(parsed)) {
+          for (const p of parsed) {
+            if (p && p.id) {
+              await saveFirestoreDirectiveProfile(userId, p);
+            }
+          }
+        }
+      }
+    } catch {}
+  } catch (err) {
+    console.warn("[Firestore] Local data sync encountered non-blocking warning:", err);
   }
 }

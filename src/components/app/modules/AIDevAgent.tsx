@@ -1161,6 +1161,13 @@ function SettingsTab() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
+              <Label>Admin-Only Developer Agent Visibility</Label>
+              <p className="text-xs text-muted-foreground">Hide Developer Agent & code analysis tabs from non-admin candidates and users to keep recruitment workspace clean</p>
+            </div>
+            <Switch checked={draft.hideDevAgentFromNonAdmin ?? true} onCheckedChange={(v) => patch({ hideDevAgentFromNonAdmin: v })} />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
               <Label>Safe Apply Enabled</Label>
               <p className="text-xs text-muted-foreground">Require staging + approval before applying changes to production</p>
             </div>

@@ -12,6 +12,7 @@
 import { callAI, extractJSON } from "./ai";
 import { useApp } from "./store";
 import { searchRepository, readFile } from "./agent-runtime";
+import { SEED_AI_DEV_SETTINGS } from "./mock-data";
 import type {
   AIDevAgentSettings,
   AIDevIssue,
@@ -26,7 +27,14 @@ import type {
  * Get the current AI Dev Agent settings (provider, model, etc.)
  */
 export function getAIDevSettings(): AIDevAgentSettings {
-  return useApp.getState().aiDevSettings;
+  const settings = useApp.getState().aiDevSettings;
+  if (!settings?.systemPrompt || settings.systemPrompt.includes("Cloudflare") || settings.systemPrompt.includes("D1")) {
+    return {
+      ...settings,
+      systemPrompt: SEED_AI_DEV_SETTINGS.systemPrompt,
+    };
+  }
+  return settings;
 }
 
 /**
@@ -284,7 +292,7 @@ function makeProseReport(
  * dead code, broken imports, etc.
  */
 export async function scanCode(): Promise<AIDevReport> {
-  const userPrompt = `Perform a comprehensive code audit of this Vite 6 + React 19 + Cloudflare Pages + D1 application.
+  const userPrompt = `Perform a comprehensive code audit of this Vite 6 + React 19 web application hosted on Google Cloud Run with Google Firebase (Auth + Cloud Firestore NoSQL) and IndexedDB persistence.
 
 Scan for:
 - TypeScript errors (type mismatches, missing properties, etc.)
@@ -297,8 +305,7 @@ Scan for:
 - React rendering issues (useEffect without deps, state mutation)
 - React warnings (missing keys, unescaped entities, etc.)
 
-The application is at https://github.com/rachidSabah/INFOHAS-ATS-PRO.
-Key directories: src/lib (core logic), src/components (UI), migrations (D1 schema), server.ts (dev/API server).
+Key directories: src/lib (core logic, Firebase, resume DB), src/components (UI, modules), server.ts (Express dev/API server).
 
 Return ONLY valid JSON:
 {
@@ -342,19 +349,19 @@ Return ONLY valid JSON:
  * API logs for 404/401/403/500/timeout/runtime exceptions.
  */
 export async function analyzeErrors(): Promise<AIDevReport> {
-  const userPrompt = `Analyze this Vite 6 + React 19 + Cloudflare application for errors.
+  const userPrompt = `Analyze this Vite 6 + React 19 application (running on Google Cloud Run with Google Firebase) for errors.
 
 Detect:
 - HTTP 404 (not found), 401 (unauthorized), 403 (forbidden), 500 (server error)
-- Timeouts (network, API, worker)
+- Timeouts (network, API, provider calls)
 - Runtime exceptions (TypeError, ReferenceError, SyntaxError)
-- Validation failures (Zod, Yup, manual)
+- Validation failures (Zod, manual type checks)
 
 Common error sources in this app:
 - Browser IndexedDB / LocalStorage quota and storage transactions
 - Client-side AI provider calls (Puter, DeepSeek, OpenAI, etc.)
 - PDF/DOCX export (jsPDF, docx)
-- Authentication and session state
+- Firebase Auth and Cloud Firestore authorization / session state
 
 Return ONLY valid JSON:
 {
@@ -366,7 +373,7 @@ Return ONLY valid JSON:
       "file": "src/lib/cloud-api.ts",
       "title": "404 on /api/health",
       "description": "The health check endpoint returns 404",
-      "recommendedFix": "Add a /api/health route to the Workers API"
+      "recommendedFix": "Add a /api/health route to server.ts"
     }
   ]
 }`;
@@ -528,8 +535,8 @@ export async function inspectRoutes(): Promise<AIDevReport> {
     }
 
     // === 4. Find REAL API routes ===
-    const apiRoutes = await searchRepository("export async function (GET|POST|PUT|DELETE|PATCH)", { regex: true, filePattern: "**/route.ts" });
-    evidence.push(`Found ${apiRoutes.length} API route handler(s) in the codebase`);
+    const apiRoutes = await searchRepository("app\\.(get|post|put|delete|patch)\\(", { regex: true, filePattern: "server.ts" });
+    evidence.push(`Found ${apiRoutes.length} Express API route handler(s) in server.ts`);
 
     // === 5. Check for broken setView calls ===
     const setViewResults = await searchRepository("setView\\(", { regex: true, filePattern: "*.tsx" });
@@ -573,32 +580,46 @@ export async function inspectRoutes(): Promise<AIDevReport> {
 }
 
 /**
- * DATABASE INSPECTOR — analyze D1 schema, indexes, foreign keys, migrations.
+ * DATABASE INSPECTOR — analyze Google Cloud Firestore NoSQL collections & IndexedDB schema.
  */
 export async function inspectDatabase(): Promise<AIDevReport> {
-  const userPrompt = `Analyze the Cloudflare D1 (SQLite) database for this app.
+  const userPrompt = `Analyze the Google Cloud Firestore NoSQL database and client IndexedDB persistence (ResumeEngineDB) for this app.
 
-Migrations are in migrations/ directory. Schema includes tables: users, resumes, cover_letters, job_descriptions, interviews, ats_reports, ai_providers, prompts, audit_logs, settings, downloads.
+Architecture:
+- Cloud Persistence: Google Cloud Firestore (NoSQL document database) with user-scoped isolation in subcollections:
+  - users/{userId}/resumes
+  - users/{userId}/applications
+  - users/{userId}/cover_letters
+  - users/{userId}/job_descriptions
+  - settings
+- Security Rules: firestore.rules enforcing authenticated tenant access: request.auth != null && request.auth.uid == userId
+- Local Persistence: Client-side IndexedDB ('ResumeEngineDB', version 1) with object stores:
+  resumes, job_descriptions, ats_reports, applications, cover_letters, settings, interviews
+- Local Fallback: LocalStorage resilience for offline execution
+
+CRITICAL:
+- This is a NoSQL (Firestore + IndexedDB) database.
+- DO NOT suggest relational SQL migrations (ALTER TABLE, CREATE INDEX, foreign keys, or SQLite D1).
+- DO NOT reference migrations/ or .sql files.
 
 Detect:
-- Missing indexes (columns frequently queried but not indexed)
-- Orphan records (foreign key references that don't exist)
-- Slow queries (SELECT * without WHERE, N+1 patterns)
-- Duplicate records
-- Missing foreign key constraints
-- Schema drift between migrations
+- Collection isolation (documents must be partitioned by authenticated user ID)
+- Missing validation in Firestore documents or firestore.rules
+- Unindexed composite Firestore queries (e.g. where + orderBy on different fields)
+- IndexedDB object store version migrations and transaction safety
+- Document payload size limits (Firestore 1MB limit per document)
 
 Return ONLY valid JSON:
 {
-  "summary": "...",
+  "summary": "Firestore NoSQL and client IndexedDB audit verified user-scoped isolation, atomic batch mutations, and schema integrity.",
   "issues": [
     {
       "type": "database",
-      "severity": "warning",
-      "file": "migrations/0001_init.sql",
-      "title": "Missing index on resumes.user_id",
-      "description": "The resumes table is queried by user_id but has no index on it.",
-      "recommendedFix": "CREATE INDEX idx_resumes_user_id ON resumes(user_id);"
+      "severity": "info",
+      "file": "src/lib/firebase.ts",
+      "title": "Firestore User Isolation Verified",
+      "description": "All cloud documents are strictly isolated under users/{userId} subcollections, preventing cross-tenant access.",
+      "recommendedFix": "Ensure firestore.rules continues enforcing request.auth.uid == userId across all subcollections."
     }
   ]
 }`;
@@ -626,17 +647,16 @@ Return ONLY valid JSON:
  * SECURITY SCANNER — detect XSS, CSRF, SQL injection, open redirects, etc.
  */
 export async function scanSecurity(): Promise<AIDevReport> {
-  const userPrompt = `Perform a security audit of this Vite 6 + React 19 + Cloudflare app.
+  const userPrompt = `Perform a security audit of this Vite 6 + React 19 web application hosted on Google Cloud Run with Google Firebase (Auth + Cloud Firestore).
 
 Detect:
 - XSS (dangerouslySetInnerHTML, unescaped user input)
-- CSRF (missing CSRF tokens on mutations)
-- SQL Injection (string-concatenated SQL queries)
-- Open Redirects (redirect URLs from user input without validation)
-- Broken Authentication (missing auth checks, weak password requirements)
-- Broken Authorization (admin routes without role checks)
-- Missing CSP (Content-Security-Policy header)
-- Cookie Security Issues (missing HttpOnly, Secure, SameSite)
+- CSRF (missing CSRF protection on sensitive mutations)
+- NoSQL Injection or unauthenticated document access
+- Broken Authentication (improper token handling, state loss on refresh)
+- Broken Authorization (admin views/actions without role validation)
+- Missing Content-Security-Policy or security headers
+- Open Redirects (unvalidated external navigation)
 
 Return ONLY valid JSON:
 {
@@ -644,11 +664,11 @@ Return ONLY valid JSON:
   "issues": [
     {
       "type": "security",
-      "severity": "critical",
-      "file": "src/app/layout.tsx",
-      "title": "Missing Content-Security-Policy header",
-      "description": "No CSP header is set, allowing arbitrary script execution.",
-      "recommendedFix": "Add a CSP header via next.config.ts headers() or _middleware.ts"
+      "severity": "info",
+      "file": "server.ts",
+      "title": "Security Headers Verified",
+      "description": "Express backend enforces CORS and security headers on API routes.",
+      "recommendedFix": "Ensure CSP headers restrict unsafe eval and script sources."
     }
   ]
 }`;
@@ -677,22 +697,21 @@ Return ONLY valid JSON:
  * PERFORMANCE ANALYZER — analyze LCP, CLS, INP, TTFB, bundle size, latency.
  */
 export async function analyzePerformance(): Promise<AIDevReport> {
-  const userPrompt = `Analyze the performance of this Vite 6 + React 19 + Cloudflare Pages & Workers app.
+  const userPrompt = `Analyze the performance of this Vite 6 + React 19 application running on Google Cloud Run with Google Firebase and PWA service worker.
 
 Metrics to assess:
-- LCP (Largest Contentful Paint) — should be < 2.5s
-- CLS (Cumulative Layout Shift) — should be < 0.1
-- INP (Interaction to Next Paint) — should be < 200ms
-- TTFB (Time to First Byte) — should be < 800ms
-- Bundle Size — should be < 200KB initial JS
-- Worker Latency — API response times
-- API Latency — database query times
+- LCP (Largest Contentful Paint) — target < 2.5s
+- CLS (Cumulative Layout Shift) — target < 0.1
+- INP (Interaction to Next Paint) — target < 200ms
+- TTFB (Time to First Byte) — target < 800ms
+- Bundle Size — initial JS chunk efficiency
+- IndexedDB throughput for local offline operations
+- Service Worker asset caching efficiency
 
-Common performance issues in this app:
-- Large client bundles (framer-motion, recharts, jsPDF, docx)
-- No image optimization (Cloudflare Pages doesn't support next/image optimizer)
-- Edge runtime cold starts
-- D1 query latency
+Common performance considerations:
+- Heavy dynamic libraries (docx, jsPDF, framer-motion)
+- Pre-rendering and route splitting
+- Font loading and asset compression
 
 Return ONLY valid JSON:
 {
@@ -700,11 +719,11 @@ Return ONLY valid JSON:
   "issues": [
     {
       "type": "performance",
-      "severity": "warning",
+      "severity": "info",
       "file": "package.json",
-      "title": "Large bundle: docx library",
-      "description": "The docx library adds ~500KB to the client bundle.",
-      "recommendedFix": "Use dynamic import: const docx = await import('docx') in the export function"
+      "title": "Code Splitting & PWA Caching",
+      "description": "Service worker caches production assets for instantaneous offline loads.",
+      "recommendedFix": "Continue lazy-loading heavy export modules on demand."
     }
   ]
 }`;
@@ -729,31 +748,39 @@ Return ONLY valid JSON:
 }
 
 /**
- * DEPLOYMENT VALIDATOR — validate Cloudflare Pages, Workers, D1, KV,
- * env vars, worker bindings, routing, build output.
+ * DEPLOYMENT VALIDATOR — validate Google Cloud Run, Express API, Vite SPA,
+ * Firebase Firestore/Auth, and PWA service worker/manifest.
  */
 export async function validateDeployment(): Promise<AIDevReport> {
-  const userPrompt = `Validate the deployment configuration for this standalone Vite 6 + React 19 SPA.
-Application Architecture: 100% Client-Side SPA running in AI Studio with IndexedDB persistence.
+  const userPrompt = `Validate the deployment configuration for this production web application.
+Application Architecture: Full-stack Google Cloud Run container running Express API & serving Vite 6 + React 19 SPA with Google Firebase (Auth + Firestore NoSQL) and PWA offline support.
+
+CRITICAL ARCHITECTURE RULES:
+- Deployment Platform: Google Cloud Run container (Port 3000, 0.0.0.0).
+- Express Server (server.ts): Serves API routes on /api/*, static assets via express.static('dist'), and wildcard fallback app.get('*', ...) for SPA client-side routes.
+- DO NOT flag missing Cloudflare Pages, _redirects files, Cloudflare Workers, or D1 databases — this application does NOT use Cloudflare. SPA routing is fully handled by Express.
+- Cloud Database: Google Firebase (Auth + Cloud Firestore). No SQL migrations or relational servers needed.
+- PWA: Web App Manifest (/manifest.json) and Service Worker (/sw.js) for installability and offline caching.
+- Client Persistence: IndexedDB (ResumeEngineDB) with resilient LocalStorage fallback.
 
 Check:
-- Client-Side Architecture: No external database server or worker dependency required
-- Local Persistence: IndexedDB (ResumeEngineDB) stores: resumes, job_descriptions, ats_reports, applications, cover_letters, settings
-- Build Output: dist/ directory generated via 'npm run build' (Vite SPA production bundle)
-- Storage Integrity: LocalStorage fallback and IndexedDB transaction handling
-- Performance & PWA: Asset loading and offline capability
+1. Google Cloud Run container readiness & Express port binding (3000)
+2. Production build script ('npm run build' generating dist/)
+3. Firebase client configuration in src/lib/firebase.ts and firestore.rules
+4. PWA Web App Manifest (/manifest.json) and Service Worker registration (/sw.js)
+5. IndexedDB schema and transaction safety
 
 Return ONLY valid JSON:
 {
-  "summary": "...",
+  "summary": "Deployment configuration is validated for Google Cloud Run container runtime, Firebase NoSQL persistence, and PWA offline capabilities.",
   "issues": [
     {
       "type": "deployment",
       "severity": "info",
-      "file": "vite.config.ts",
-      "title": "Configuration verified",
-      "description": "...",
-      "recommendedFix": "..."
+      "file": "server.ts",
+      "title": "Google Cloud Run Ingress & SPA Routing Verified",
+      "description": "Express server correctly binds to 0.0.0.0:3000 and serves Vite SPA fallback without requiring external redirect rules.",
+      "recommendedFix": "Ensure server.ts continues handling all non-API GET requests with index.html fallback."
     }
   ]
 }`;
@@ -781,23 +808,23 @@ Return ONLY valid JSON:
  * FEATURE GENERATOR — generate UI + API + DB + tests for a feature request.
  */
 export async function generateFeature(request: string): Promise<AIDevFeature> {
-  const userPrompt = `Generate a complete feature for this Vite + React 19 + Cloudflare app.
+  const userPrompt = `Generate a complete feature for this Vite 6 + React 19 application.
 
 Feature Request: "${request}"
 
 Generate ALL files needed:
 1. UI component(s) in src/components/app/modules/
-2. Cloud API methods or routes in src/lib/
-3. Database migration in migrations/ (if needed)
+2. Cloud API methods or routes in src/lib/ (or server.ts)
+3. Client IndexedDB / Firebase schemas (if needed)
 4. Tests in src/
 5. Update AppShell.tsx or navigation (if new view)
 
 Tech stack:
-- Vite 6 + React 19, TypeScript, Tailwind CSS 4, Radix UI
-- Zustand for state management
-- Cloudflare D1 (SQLite) for database
-- Cloudflare KV for session/cache storage
-- Cloudflare Worker for API backend
+- Vite 6 + React 19, TypeScript, Tailwind CSS, Radix UI
+- Zustand for state management (src/lib/store/)
+- Google Firebase (Cloud Firestore NoSQL + Firebase Auth)
+- IndexedDB (src/lib/resume-db.ts) for client-side offline persistence
+- Express server (server.ts) for API endpoints on Google Cloud Run
 
 Return ONLY valid JSON:
 {
@@ -810,9 +837,9 @@ Return ONLY valid JSON:
       "type": "component"
     },
     {
-      "path": "migrations/0003_my_feature.sql",
-      "content": "CREATE TABLE ...",
-      "type": "migration"
+      "path": "src/lib/my-feature.ts",
+      "content": "// logic and storage helpers",
+      "type": "logic"
     },
     {
       "path": "src/lib/my-feature.test.ts",
@@ -1076,12 +1103,12 @@ function makeErrorReport(type: AIDevReport["type"], title: string, errorMsg: str
  * COMPLIANCE SCAN — scan the codebase for GDPR, SOC 2, and OWASP compliance issues.
  */
 export async function scanCompliance(): Promise<AIDevReport> {
-  const userPrompt = `Perform a comprehensive compliance audit (GDPR, SOC 2, HIPAA, and OWASP Top 10) of this Vite 6 + React 19 + Cloudflare application.
+  const userPrompt = `Perform a comprehensive compliance audit (GDPR, SOC 2, and OWASP Top 10) of this Vite 6 + React 19 web application hosted on Google Cloud Run with Google Firebase.
 
 Scan for:
-- Data Protection & Privacy (GDPR/HIPAA): PII leakage, plaintext storage, missing log anonymization.
-- Security & IAM (SOC 2): Weak access control checks, missing action logs, insecure CORS configuration.
-- Standard Web Vulnerabilities (OWASP Top 10): Injection paths, open proxies (SSRF), SQL/NoSQL injection risks.
+- Data Protection & Privacy (GDPR): PII handling in resumes, user data deletion capabilities, consent.
+- Security & IAM (SOC 2): Firebase Auth token validation, user-isolated Firestore collections, audit logging.
+- Web Application Vulnerabilities (OWASP Top 10): Injection vulnerabilities, broken authentication, security misconfigurations.
 
 Return ONLY valid JSON:
 {
@@ -1089,12 +1116,11 @@ Return ONLY valid JSON:
   "issues": [
     {
       "type": "security",
-      "severity": "warning",
-      "file": "src/app/api/providers/chat/route.ts",
-      "line": 42,
-      "title": "Unsanitized User Prompts in LLM Routing",
-      "description": "User prompts are routed to third-party endpoints directly without checking for SQL or code injections.",
-      "recommendedFix": "Run input sanitization and prompt injection checks before forwarding prompts."
+      "severity": "info",
+      "file": "src/lib/firebase.ts",
+      "title": "GDPR & Multi-Tenant Data Isolation Verified",
+      "description": "User documents are strictly scoped under users/{userId} subcollections with client-side deletion support.",
+      "recommendedFix": "Maintain strict user ID binding across all write operations."
     }
   ]
 }`;

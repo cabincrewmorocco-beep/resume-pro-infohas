@@ -61,6 +61,8 @@ export interface AgentContext {
   dynamicSections: DynamicSectionInfo[];
   previousPatches: AgentPatch[];
   providerId?: string;
+  optimizationPolicy?: string;
+  directiveConfig?: import("../types").OptimizerDirectiveConfig | null;
 }
 
 export interface IndustryContext {

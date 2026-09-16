@@ -33,13 +33,20 @@ export function AuthModal() {
   // === Google sign in ===
   const handleGoogle = async () => {
     setLoading("google");
-    const result = await signInWithGoogle();
-    setLoading(null);
-    if (!result.ok) {
-      toast.error(result.error || "Google sign-in failed.");
-    } else if (result.user) {
-      toast.success(`Welcome, ${result.user.name || "Candidate"}!`);
-      close();
+    try {
+      const result = await signInWithGoogle();
+      setLoading(null);
+      if (!result.ok) {
+        if (result.error && !result.error.includes("cancelled") && !result.error.includes("closed-by-user") && !result.error.includes("popup-closed")) {
+          toast.error(result.error || "Google sign-in failed.");
+        }
+      } else if (result.user) {
+        toast.success(`Welcome, ${result.user.name || "Candidate"}!`);
+        close();
+      }
+    } catch (err: any) {
+      setLoading(null);
+      toast.error(err?.message || "Google sign-in encountered an error.");
     }
   };
 

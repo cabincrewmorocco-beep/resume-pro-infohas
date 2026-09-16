@@ -10,6 +10,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { motion, AnimatePresence } from "framer-motion";
+import { PWAInstallButton } from "@/components/shared/PWAInstallButton";
 
 interface SearchResult {
   type: "resume" | "jd" | "cover-letter" | "interview" | "view";
@@ -342,6 +343,9 @@ export function TopBar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
+        {/* PWA Install Button */}
+        <PWAInstallButton />
+
         {/* Desktop sidebar collapse toggle */}
         <Button
           variant="ghost"
@@ -467,7 +471,8 @@ function MobileSidebarDrawer({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </nav>
-        <div className="p-3 border-t border-sidebar-border space-y-1">
+        <div className="p-3 border-t border-sidebar-border space-y-2">
+          <PWAInstallButton className="w-full justify-center" />
           <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent">
             <Icon name={theme === "light" ? "Moon" : "Sun"} className="w-4 h-4" /> {theme === "light" ? "Dark mode" : "Light mode"}
           </button>

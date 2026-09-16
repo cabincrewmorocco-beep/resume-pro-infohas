@@ -18,6 +18,8 @@ export function Settings() {
   const updateUserName = useApp((s) => s.updateUserName);
   const updateUserEmail = useApp((s) => s.updateUserEmail);
   const changePassword = useApp((s) => s.changePassword);
+  const aiDevSettings = useApp((s) => s.aiDevSettings);
+  const updateAIDevSettings = useApp((s) => s.updateAIDevSettings);
   const log = useApp((s) => s.log);
   const setView = useApp((s) => s.setView);
 
@@ -378,11 +380,49 @@ export function Settings() {
         </CardContent>
       </Card>
 
+      {/* Developer & Engineering Suite */}
+      {(user?.role === "admin" || user?.role === "super_admin") && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Icon name="Bot" className="w-4 h-4 text-brand" /> Developer Agent Workspace
+            </CardTitle>
+            <CardDescription>
+              Configure access control and privacy scoping for internal engineering tools.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/20">
+              <div className="space-y-0.5 pr-4">
+                <div className="font-medium text-sm flex items-center gap-2">
+                  Admin-Only Developer Agent
+                  <Badge variant="outline" className="text-[10px]">Access Control</Badge>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Hide Developer Agent, Deployment Validator, and Code Audit tabs from non-admin candidates so the candidate recruitment workspace remains clean.
+                </div>
+              </div>
+              <Switch
+                checked={aiDevSettings?.hideDevAgentFromNonAdmin ?? true}
+                onCheckedChange={(checked) => {
+                  updateAIDevSettings({ hideDevAgentFromNonAdmin: checked });
+                  toast.success(
+                    checked
+                      ? "Developer Agent restricted to Admins & Super Admins."
+                      : "Developer Agent is now visible to all workspace roles."
+                  );
+                }}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Privacy & data */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2"><Icon name="ShieldCheck" className="w-4 h-4 text-brand" /> Privacy & data</CardTitle>
-          <CardDescription>Your data stays on your device in dev. In production, it's encrypted at rest in Cloudflare D1 + R2.</CardDescription>
+          <CardDescription>Your data stays on your device in dev. In production, documents are encrypted at rest with Google Cloud Firestore and Google Cloud Storage.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="rounded-lg border border-border p-3 flex items-start gap-3">

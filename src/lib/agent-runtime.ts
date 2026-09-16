@@ -555,39 +555,41 @@ export async function traceReactComponents(): Promise<Array<{ name: string; file
 }
 
 // ============================================================================
-// TRACE WORKER EXECUTION — trace the Cloudflare Worker execution path
+// TRACE SERVER EXECUTION — trace Express API endpoints in server.ts
 // ============================================================================
 
 export async function traceWorkerExecution(): Promise<CodeEvidence[]> {
-  const results = await searchRepository("app\\.(get|post|put|delete|patch)\\(", { regex: true, filePattern: "**/workers/**" });
+  const results = await searchRepository("app\\.(get|post|put|delete|patch)\\(", { regex: true, filePattern: "server.ts" });
   return results.map((r) => ({
     file: r.file,
     line: r.line,
     code: r.match,
-    function: "worker-route",
+    function: "express-api-route",
   }));
 }
 
 // ============================================================================
-// TRACE DATABASE QUERIES — find all D1 database queries
+// TRACE DATABASE QUERIES — find Firestore NoSQL & client IndexedDB queries
 // ============================================================================
 
 export async function traceDatabaseQueries(): Promise<SearchResult[]> {
   const patterns = [
-    "db.prepare(",
-    "db.exec(",
-    "db.batch(",
-    "INSERT INTO",
-    "SELECT * FROM",
-    "UPDATE .* SET",
-    "DELETE FROM",
-    "CREATE TABLE",
-    "ALTER TABLE",
+    "collection(",
+    "getDoc(",
+    "getDocs(",
+    "setDoc(",
+    "deleteDoc(",
+    "query(",
+    "where(",
+    "orderBy(",
+    "saveFirestoreResume",
+    "getDB(",
+    "transaction(",
   ];
 
   const allResults: SearchResult[] = [];
   for (const pattern of patterns) {
-    const results = await searchRepository(pattern, { regex: pattern.includes(".*"), filePattern: "*.{ts,sql}" });
+    const results = await searchRepository(pattern, { regex: false, filePattern: "*.{ts,tsx}" });
     allResults.push(...results);
   }
 

@@ -1,22 +1,39 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    // User document and all its subcollections (resumes, applications, coverLetters, jobDescriptions, atsReports, etc.)
+    // User-scoped isolation: Users can only read and write their own documents & subcollections
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read, write: if request.auth != null && request.auth.uid == userId;
 
-      match /{allSubcollections=**} {
-        allow read, write: if isOwner(userId);
+      match /resumes/{resumeId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
       }
+
+      match /applications/{applicationId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /cover_letters/{letterId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /job_descriptions/{jdId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /interviews/{interviewId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /directive_profiles/{profileId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Public/system settings read-only for authenticated users, admin-only write
+    match /settings/{settingId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
     }
   }
 }

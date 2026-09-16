@@ -283,7 +283,7 @@ Your analysis is stored in the reasons of a single metadata patch.`,
       this.agentType
     );
 
-    const { patches } = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const { patches } = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
 
     return {
       agentId: this.agentId,
@@ -325,7 +325,7 @@ You DO NOT edit the resume.`,
       this.agentType
     );
 
-    const { patches } = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const { patches } = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
 
     return {
       agentId: this.agentId,
@@ -367,7 +367,7 @@ Return [] if no improvements needed.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {
@@ -416,7 +416,7 @@ Return [] if text is already professional.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {
@@ -469,7 +469,7 @@ Return [] if terminology is already appropriate.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {
@@ -502,16 +502,18 @@ class SkillsEnhancementAgentImpl implements SpecialistAgent {
       "Skills Enhancement Agent",
       `You are a skills optimization specialist.
 
-RULES:
-- Improve skill name wording for better ATS matching
-- Group related skills under appropriate categories
-- Move misplaced skills to correct categories
-- Create new categories only if a group of 2+ skills needs them
-- Never remove any existing skill
-- Never add skills not present in the canonical resume
-- Never add soft skills as hard skills
-
-IMPORTANT: Languages are NEVER skills. Never move language names into skills.
+CRITICAL ANTI-HALLUCINATION & TECHNICAL CREDENTIAL GROUNDING:
+- Prevent hallucination of technical credentials, specialized software, tools, type ratings, or certifications not grounded in the source resume or realistic domain proximity.
+- NEVER invent specialized software (e.g., Sabre, Amadeus, Galileo, Altea, Python, Jira) unless explicitly indicated or transferable from candidate's existing background.
+- NEVER add skills not present or honestly implied by the canonical resume.
+- Do NOT inject high-specificity operational credentials for unrelated careers.
+- Improve skill name wording for better ATS matching (e.g. standardizing names).
+- Group related skills under appropriate categories.
+- Move misplaced skills to correct categories.
+- Create new categories only if a group of 2+ skills needs them.
+- Never remove any existing skill.
+- Never add soft skills as hard skills.
+- IMPORTANT: Languages are NEVER skills. Never move language names into skills.
 
 Produce patches for skill_*.category and skill_*.name fields only.
 Return [] if skills are already optimal.`,
@@ -519,7 +521,7 @@ Return [] if skills are already optimal.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {
@@ -549,7 +551,15 @@ class ExperienceEnhancementAgentImpl implements SpecialistAgent {
       "Experience Enhancement Agent",
       `You are an experience section specialist.
 
-YOUR ONLY JOB: Improve bullet descriptions in the experience section.
+YOUR ONLY JOB: Improve bullet descriptions in the experience section using the STAR / X-Y-Z formula.
+
+CRITICAL STAR / X-Y-Z FORMULA ENFORCEMENT:
+Every rewritten bullet MUST follow the STAR / X-Y-Z structure:
+[Action Verb] + [Context/Operational Task] + [Measurable Outcome or Business Impact]
+- Action Verb: Start with a strong, active power verb in past tense (e.g., Orchestrated, Spearheaded, Accelerated, Delivered, Facilitated, Resolved).
+- Context/Task: Provide the operational setting, challenge, or customer touchpoint.
+- Measurable Outcome / Impact: State the concrete result, efficiency gain, customer satisfaction outcome, or safety compliance achieved.
+- If no explicit numeric metric exists in the source, provide a clear qualitative impact. NEVER use bracket placeholders ([X], [Y]%, [number]).
 
 IMMUTABLE (NEVER change):
 - Company names (field: "company")
@@ -563,7 +573,7 @@ IMPROVE ONLY:
 - Bullet text (field: "bullet_N" where N is the index)
 
 Focus on: stronger action verbs, quantified achievements, ATS keywords, clearer impact.
-Never fabricate achievements or numbers that don't exist.
+Never fabricate achievements, companies, or numbers that don't exist.
 
 Produce patches ONLY for experience_X.bullet_N fields.
 Return [] if all bullets are already excellent.`,
@@ -571,7 +581,7 @@ Return [] if all bullets are already excellent.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {
@@ -621,7 +631,7 @@ Return [] if already optimal.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {
@@ -682,7 +692,7 @@ Return [] if no sections need improvement.`,
       this.agentType
     );
 
-    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId);
+    const startResult = await callAgentAI(prompt, this.agentId, this.agentType, context.providerId, context.optimizationPolicy);
     const patches = startResult.patches || [];
 
     return {

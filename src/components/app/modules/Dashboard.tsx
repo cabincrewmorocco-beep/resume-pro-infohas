@@ -44,29 +44,33 @@ export function Dashboard() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div
+      id="dashboard-root"
+      className="space-y-4 sm:space-y-6 w-full max-w-full min-w-0 [container-type:inline-size] overflow-hidden"
+      style={{ containerType: "inline-size" }}
+    >
       {/* Welcome */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl gradient-brand text-white p-6 sm:p-8 relative overflow-hidden"
+        className="rounded-2xl gradient-brand text-white p-4 sm:p-6 md:p-8 relative overflow-hidden w-full max-w-full"
       >
         <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-white/10 blur-2xl" />
         <div className="absolute bottom-0 right-0 w-60 h-60 rounded-full bg-gold/20 blur-3xl" />
         <div className="relative">
           <Badge variant="gold"><Icon name="Sparkles" className="w-3 h-3" /> {user?.role === "super_admin" ? "Super Admin" : user?.role === "admin" ? "Admin" : "Pro"} account</Badge>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold mt-3">
-            Welcome back, {user?.name?.split(" ")[0]}.
+          <h1 className="font-display text-xl sm:text-2xl md:text-3xl font-bold mt-3">
+            Welcome back, {user?.name?.split(" ")[0] || "Candidate"}.
           </h1>
-          <p className="text-white/85 mt-1 max-w-xl text-pretty">
+          <p className="text-white/85 mt-1 max-w-xl text-pretty text-xs sm:text-sm">
             Your AI-powered career toolkit is ready. Pick a quick action below or jump into any module from the sidebar.
           </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Button onClick={() => setView("builder")} className="bg-white text-brand hover:bg-white/90 gap-2">
-              <Icon name="FilePlus2" className="w-4 h-4" /> New resume
+          <div className="mt-4 sm:mt-5 flex flex-wrap gap-2">
+            <Button onClick={() => setView("builder")} className="bg-white text-brand hover:bg-white/90 gap-2 w-full xs:w-auto sm:w-auto justify-center">
+              <Icon name="FilePlus2" className="w-4 h-4 shrink-0" /> New resume
             </Button>
-            <Button onClick={() => setView("ats-checker")} variant="outline" className="bg-transparent border-white/40 text-white hover:bg-white/10 hover:text-white gap-2">
-              <Icon name="ScanText" className="w-4 h-4" /> Check ATS
+            <Button onClick={() => setView("ats-checker")} variant="outline" className="bg-transparent border-white/40 text-white hover:bg-white/10 hover:text-white gap-2 w-full xs:w-auto sm:w-auto justify-center">
+              <Icon name="ScanText" className="w-4 h-4 shrink-0" /> Check ATS
             </Button>
           </div>
         </div>
@@ -78,14 +82,14 @@ export function Dashboard() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           onClick={() => setView("app-tracker")}
-          className="w-full text-left rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-4 flex items-center gap-3 hover:shadow-sm transition-shadow"
+          className="w-full text-left rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40 p-3 sm:p-4 flex items-center gap-2.5 sm:gap-3 hover:shadow-sm transition-shadow min-w-0 overflow-hidden"
         >
           <Icon name="BellRing" className="w-5 h-5 text-amber-600 shrink-0" />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium text-amber-900 dark:text-amber-200">
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs sm:text-sm font-medium text-amber-900 dark:text-amber-200 truncate">
               {followUps.length} application follow-up{followUps.length > 1 ? "s" : ""} due
             </span>
-            <span className="block text-xs text-amber-800 dark:text-amber-300 truncate">
+            <span className="block text-[11px] sm:text-xs text-amber-800 dark:text-amber-300 truncate">
               Next up: {followUps[0].role || "Untitled role"} @ {followUps[0].company || "—"}
               {followUps.length > 1 ? ` · +${followUps.length - 1} more` : ""}
             </span>
@@ -94,8 +98,8 @@ export function Dashboard() {
         </motion.button>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Fluid Stats Grid */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] sm:grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2.5 sm:gap-4 w-full">
         {stats.map((s, i) => (
           <motion.button
             key={s.label}
@@ -103,17 +107,17 @@ export function Dashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.05 }}
             onClick={s.action}
-            className="text-left"
+            className="text-left w-full min-w-0"
           >
-            <Card className="hover:shadow-premium hover:-translate-y-0.5 transition-all">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between">
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: `${s.color}14`, color: s.color }}>
-                    <Icon name={s.icon} className="w-5 h-5" />
+            <Card className="hover:shadow-premium hover:-translate-y-0.5 transition-all w-full h-full overflow-hidden">
+              <CardContent className="p-3.5 sm:p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${s.color}14`, color: s.color }}>
+                    <Icon name={s.icon} className="w-4 h-4 sm:w-5 sm:h-5" />
                   </div>
-                  <span className="text-2xl font-bold font-display">{s.value}</span>
+                  <span className="text-xl sm:text-2xl font-bold font-display truncate">{s.value}</span>
                 </div>
-                <div className="mt-2 text-sm text-muted-foreground">{s.label}</div>
+                <div className="mt-1.5 sm:mt-2 text-xs sm:text-sm text-muted-foreground truncate">{s.label}</div>
               </CardContent>
             </Card>
           </motion.button>
@@ -123,31 +127,31 @@ export function Dashboard() {
       {/* Real-time Resume Strength Gauge */}
       <ResumeStrengthGauge onNavigate={(view) => setView(view as any)} />
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 w-full max-w-full">
         {/* Quick actions */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Icon name="Zap" className="w-4 h-4 text-gold" /> Quick actions</CardTitle>
-            <CardDescription>Jump into the most-used tools.</CardDescription>
+        <Card className="lg:col-span-2 w-full max-w-full overflow-hidden">
+          <CardHeader className="p-4 sm:p-6 pb-2 sm:pb-3">
+            <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><Icon name="Zap" className="w-4 h-4 text-gold shrink-0" /> Quick actions</CardTitle>
+            <CardDescription className="text-xs sm:text-sm">Jump into the most-used tools.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="grid sm:grid-cols-2 gap-3">
+          <CardContent className="p-4 sm:p-6 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 w-full">
               {quickActions.map((a) => (
                 <button
                   key={a.title}
                   onClick={a.action}
-                  className="group text-left rounded-xl border border-border bg-card p-4 hover:shadow-premium hover:-translate-y-0.5 transition-all"
+                  className="group text-left rounded-xl border border-border bg-card p-3 sm:p-4 hover:shadow-premium hover:-translate-y-0.5 transition-all w-full min-w-0 overflow-hidden"
                 >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${a.color}14`, color: a.color }}>
-                      <Icon name={a.icon} className="w-5 h-5" />
+                  <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${a.color}14`, color: a.color }}>
+                      <Icon name={a.icon} className="w-4 h-4 sm:w-5 sm:h-5" />
                     </div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-sm flex items-center gap-1">
-                        {a.title}
-                        <Icon name="ArrowRight" className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-xs sm:text-sm flex items-center gap-1 truncate">
+                        <span className="truncate">{a.title}</span>
+                        <Icon name="ArrowRight" className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition shrink-0" />
                       </div>
-                      <div className="text-xs text-muted-foreground mt-0.5 text-pretty">{a.desc}</div>
+                      <div className="text-[11px] sm:text-xs text-muted-foreground mt-0.5 line-clamp-2">{a.desc}</div>
                     </div>
                   </div>
                 </button>
@@ -157,16 +161,16 @@ export function Dashboard() {
         </Card>
 
         {/* Latest ATS + AI status */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Icon name="Activity" className="w-4 h-4 text-brand" /> Latest ATS report</CardTitle>
+        <div className="space-y-4 sm:space-y-6 w-full max-w-full min-w-0">
+          <Card className="w-full overflow-hidden">
+            <CardHeader className="p-4 sm:p-6 pb-2">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><Icon name="Activity" className="w-4 h-4 text-brand shrink-0" /> Latest ATS report</CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-col items-center">
+            <CardContent className="flex flex-col items-center p-4 sm:p-6 pt-2">
               {latestReport ? (
                 <>
                   <ScoreRing value={latestReport.scores.ats} size={120} label="ATS Score" />
-                  <div className="mt-3 text-xs text-muted-foreground text-center">
+                  <div className="mt-3 text-xs text-muted-foreground text-center truncate w-full">
                     {latestReport.jdMatchPercent != null ? `${latestReport.jdMatchPercent}% JD match` : "No JD comparison"}
                   </div>
                   <Button size="sm" variant="outline" className="mt-3 w-full" onClick={() => setView("ats-checker")}>
@@ -174,10 +178,10 @@ export function Dashboard() {
                   </Button>
                 </>
               ) : (
-                <div className="text-center py-4">
+                <div className="text-center py-4 w-full">
                   <Icon name="ScanText" className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-                  <p className="text-sm text-muted-foreground mt-2">No reports yet</p>
-                  <Button size="sm" className="mt-3 bg-brand hover:bg-brand-dark text-white" onClick={() => setView("ats-checker")}>
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-2">No reports yet</p>
+                  <Button size="sm" className="mt-3 bg-brand hover:bg-brand-dark text-white w-full sm:w-auto" onClick={() => setView("ats-checker")}>
                     Run first check
                   </Button>
                 </div>
@@ -185,17 +189,17 @@ export function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Icon name="Cpu" className="w-4 h-4 text-gold" /> AI providers</CardTitle>
+          <Card className="w-full overflow-hidden">
+            <CardHeader className="p-4 sm:p-6 pb-2">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg"><Icon name="Cpu" className="w-4 h-4 text-gold shrink-0" /> AI providers</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold font-display">{activeProviders} <span className="text-sm font-normal text-muted-foreground">active</span></div>
+            <CardContent className="p-4 sm:p-6 pt-2">
+              <div className="text-xl sm:text-2xl font-bold font-display">{activeProviders} <span className="text-xs sm:text-sm font-normal text-muted-foreground">active</span></div>
               <div className="mt-3 space-y-1.5">
                 {providers.slice(0, 3).map((p) => (
                   <div key={p.id} className="flex items-center justify-between text-xs">
-                    <span className="truncate">{p.name}</span>
-                    <span className={`w-1.5 h-1.5 rounded-full ${p.status === "healthy" ? "bg-emerald-500" : p.status === "degraded" ? "bg-amber-500" : "bg-red-500"}`} />
+                    <span className="truncate pr-2">{p.name}</span>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.status === "healthy" ? "bg-emerald-500" : p.status === "degraded" ? "bg-amber-500" : "bg-red-500"}`} />
                   </div>
                 ))}
               </div>
@@ -207,31 +211,31 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Recent resumes */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2"><Icon name="FileText" className="w-4 h-4 text-brand" /> Your resumes</CardTitle>
-              <CardDescription>{resumes.length} total · {jds.length} job descriptions saved</CardDescription>
+      {/* Recent resumes with fluid responsive grid */}
+      <Card className="w-full max-w-full overflow-hidden">
+        <CardHeader className="p-4 sm:p-6 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg truncate"><Icon name="FileText" className="w-4 h-4 text-brand shrink-0" /> Your resumes</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">{resumes.length} total · {jds.length} job descriptions saved</CardDescription>
             </div>
-            <Button size="sm" onClick={() => setView("builder")} className="bg-brand hover:bg-brand-dark text-white gap-2">
+            <Button size="sm" onClick={() => setView("builder")} className="bg-brand hover:bg-brand-dark text-white gap-2 shrink-0 self-start sm:self-auto">
               <Icon name="Plus" className="w-4 h-4" /> New
             </Button>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <CardContent className="p-4 sm:p-6 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3 sm:gap-4 w-full">
             {resumes.map((r) => {
               const template = TEMPLATES.find((t) => t.id === r.template);
               return (
                 <button
                   key={r.id}
                   onClick={() => { setActiveResume(r.id); setView("builder"); }}
-                  className="group text-left rounded-xl border border-border bg-card p-4 hover:shadow-premium hover:-translate-y-0.5 transition-all"
+                  className="group text-left rounded-xl border border-border bg-card p-3.5 sm:p-4 hover:shadow-premium hover:-translate-y-0.5 transition-all w-full min-w-0 overflow-hidden"
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm font-semibold truncate mr-2" title={r.title || r.name}>{r.title || r.name}</div>
+                  <div className="flex items-center justify-between mb-2 gap-2">
+                    <div className="text-sm font-semibold truncate flex-1" title={r.title || r.name}>{r.title || r.name}</div>
                     <Badge variant={r.source === "ai-optimized" ? "brand" : r.source === "upload" ? "gold" : "outline"} className="text-[10px] capitalize shrink-0">
                       {r.source === "ai-optimized" ? "Optimized" : r.source === "upload" ? "Uploaded" : (template?.name ?? r.template)}
                     </Badge>
@@ -241,11 +245,11 @@ export function Dashboard() {
                   )}
                   {r.headline && <div className="text-xs text-muted-foreground truncate">{r.headline}</div>}
                   <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><Icon name="Briefcase" className="w-3 h-3" /> {(r.experience || []).length} exp</span>
-                    <span className="flex items-center gap-1"><Icon name="Wrench" className="w-3 h-3" /> {(r.skills || []).length} skills</span>
+                    <span className="flex items-center gap-1"><Icon name="Briefcase" className="w-3 h-3 shrink-0" /> {(r.experience || []).length} exp</span>
+                    <span className="flex items-center gap-1"><Icon name="Wrench" className="w-3 h-3 shrink-0" /> {(r.skills || []).length} skills</span>
                   </div>
                   <div className="mt-3 text-xs text-brand font-medium flex items-center gap-1">
-                    Open builder <Icon name="ArrowRight" className="w-3 h-3 group-hover:translate-x-0.5 transition" />
+                    Open builder <Icon name="ArrowRight" className="w-3 h-3 group-hover:translate-x-0.5 transition shrink-0" />
                   </div>
                 </button>
               );

@@ -24,12 +24,10 @@ export default function App() {
   const needsRehydrate = useApp((s) => s._needsRehydrate);
   const rehydrateSession = useApp((s) => s.rehydrateSession);
 
-  // SSR-Safe Rehydration
+  // SSR-Safe Rehydration: always initialize and rehydrate session on mount
   useEffect(() => {
-    if (needsRehydrate) {
-      rehydrateSession();
-    }
-  }, [needsRehydrate, rehydrateSession]);
+    rehydrateSession();
+  }, [rehydrateSession]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {

@@ -752,6 +752,7 @@ export interface AIDevAgentSettings {
   autoApplyFixes?: boolean;
   testOnCommit?: boolean;
   level?: string;
+  hideDevAgentFromNonAdmin?: boolean;
   [key: string]: unknown;
 }
 

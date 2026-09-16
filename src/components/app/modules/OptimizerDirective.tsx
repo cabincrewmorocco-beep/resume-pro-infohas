@@ -13,10 +13,11 @@ import { useApp } from "@/lib/store";
 import { SEED_OPTIMIZER_DIRECTIVE } from "@/lib/mock-data";
 import { toast } from "sonner";
 import type { OptimizerDirectiveConfig, AgentDirectives, ATSSystemTarget, ToneWritingConfig, CustomKeywordsConfig, TextAlignment, RenderSectionType } from "@/lib/types";
-import { BUILT_IN_PROFILES, applyProfileToConfig, isBuiltInProfile } from "@/lib/directive-profiles";
+import { BUILT_IN_PROFILES, applyProfileToConfig, isBuiltInProfile, slugifyProfileId } from "@/lib/directive-profiles";
 import type { DirectiveProfile } from "@/lib/directive-profiles";
 import { STRUCTURAL_BLUEPRINTS, isBuiltInBlueprint } from "@/lib/structural-blueprints";
 import type { StructuralBlueprint, ResumeSectionStructure } from "@/lib/structural-blueprints";
+import { DirectiveManager } from "./DirectiveManager";
 
 // Canonical resume sections available for per-section text-alignment overrides.
 const ALIGNMENT_SECTIONS: Array<{ key: RenderSectionType; label: string }> = [
@@ -42,11 +43,6 @@ const BLUEPRINT_SECTION_IDS: Array<{ id: ResumeSectionStructure["id"]; label: st
   { id: "languages", label: "Languages" },
   { id: "additional", label: "Additional Information" },
 ];
-
-function slugifyProfileId(name: string): string {
-  const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return slug ? `custom-${slug}` : `custom-profile-${Date.now()}`;
-}
 
 function cloneBlueprint(bp: StructuralBlueprint): StructuralBlueprint {
   return JSON.parse(JSON.stringify(bp)) as StructuralBlueprint;
@@ -159,6 +155,7 @@ export function OptimizerDirective() {
   const reset = useApp((s) => s.resetOptimizerDirective);
   const customProfiles = useApp((s) => s.customDirectiveProfiles);
   const saveCustomProfiles = useApp((s) => s.saveCustomDirectiveProfiles);
+  const deleteCustomDirectiveProfile = useApp((s) => s.deleteCustomDirectiveProfile);
   const customBlueprints = useApp((s) => s.customStructuralBlueprints);
   const saveCustomBlueprints = useApp((s) => s.saveCustomStructuralBlueprints);
 
@@ -169,6 +166,36 @@ export function OptimizerDirective() {
   // === Directive Profile editor state ===
   const [profileFormOpen, setProfileFormOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({ overwriteId: "__new__", name: "", description: "", tags: "" });
+
+  // === Custom Directive Profile Creator / Editor State ===
+  const [createDirectiveOpen, setCreateDirectiveOpen] = useState(false);
+  const [isEditingExisting, setIsEditingExisting] = useState(false);
+  const [directiveForm, setDirectiveForm] = useState<{
+    id: string;
+    name: string;
+    targetIndustry: string;
+    baseTemplateId: string;
+    customInstructions: string;
+    a4Preset: "strict-1page" | "standard" | "executive-2page" | "custom";
+    maxBullets: number;
+    summaryLengthWords: number;
+    fontSizePt: number;
+    sectionTitleSizePt: number;
+  }>({
+    id: "",
+    name: "",
+    targetIndustry: "Airport Retail",
+    baseTemplateId: "aviation-hospitality",
+    customInstructions: "Enforce strict single-page A4 format, highlight passenger diplomacy, luxury retail revenue metrics, bilingual communication, and 5-star service standards.",
+    a4Preset: "strict-1page",
+    maxBullets: 4,
+    summaryLengthWords: 70,
+    fontSizePt: 9.5,
+    sectionTitleSizePt: 11,
+  });
+
+  // Delete profile confirmation state
+  const [profileToDelete, setProfileToDelete] = useState<{ id: string; name: string } | null>(null);
 
   // === Structural Blueprint editor state ===
   const [bpEditor, setBpEditor] = useState<StructuralBlueprint | null>(null);
@@ -255,6 +282,235 @@ export function OptimizerDirective() {
   // ======================================================================
   // Directive Profile editor actions
   // ======================================================================
+
+  const openNewDirectiveModal = () => {
+    setIsEditingExisting(false);
+    setDirectiveForm({
+      id: "",
+      name: "",
+      targetIndustry: "Airport Retail",
+      baseTemplateId: "aviation-hospitality",
+      customInstructions: "Enforce strict single-page A4 format, highlight passenger diplomacy, luxury retail revenue metrics, bilingual communication, and 5-star airline customer service standards.",
+      a4Preset: "strict-1page",
+      maxBullets: 4,
+      summaryLengthWords: 70,
+      fontSizePt: 9.5,
+      sectionTitleSizePt: 11,
+    });
+    setCreateDirectiveOpen(true);
+  };
+
+  const openEditCustomDirectiveModal = (profile: DirectiveProfile) => {
+    setIsEditingExisting(true);
+    const overrides = profile.overrides || {};
+    const bullets = overrides.experienceBulletsPerEntry ?? 4;
+    const summaryWords = overrides.summaryMaxWords ?? 75;
+    const fontPt = overrides.bodyFontSizePt ?? 9.5;
+    const titlePt = overrides.sectionTitleSizePt ?? 11;
+
+    let preset: "strict-1page" | "standard" | "executive-2page" | "custom" = "custom";
+    if (bullets <= 4 && summaryWords <= 80 && fontPt <= 9.5) {
+      preset = "strict-1page";
+    } else if (bullets === 5 && summaryWords <= 130) {
+      preset = "standard";
+    } else if (bullets >= 6) {
+      preset = "executive-2page";
+    }
+
+    setDirectiveForm({
+      id: profile.id,
+      name: profile.name,
+      targetIndustry: profile.tags?.find((t) => t !== "custom" && !t.includes("page")) || profile.tags?.[0] || "",
+      baseTemplateId: "custom",
+      customInstructions: String(overrides.customDirectiveOverride || ""),
+      a4Preset: preset,
+      maxBullets: bullets,
+      summaryLengthWords: summaryWords,
+      fontSizePt: fontPt,
+      sectionTitleSizePt: titlePt,
+    });
+    setCreateDirectiveOpen(true);
+  };
+
+  const applyA4Preset = (preset: "strict-1page" | "standard" | "executive-2page") => {
+    if (preset === "strict-1page") {
+      setDirectiveForm((prev) => ({
+        ...prev,
+        a4Preset: "strict-1page",
+        maxBullets: 4,
+        summaryLengthWords: 70,
+        fontSizePt: 9.5,
+        sectionTitleSizePt: 11,
+      }));
+    } else if (preset === "standard") {
+      setDirectiveForm((prev) => ({
+        ...prev,
+        a4Preset: "standard",
+        maxBullets: 5,
+        summaryLengthWords: 110,
+        fontSizePt: 10,
+        sectionTitleSizePt: 12,
+      }));
+    } else if (preset === "executive-2page") {
+      setDirectiveForm((prev) => ({
+        ...prev,
+        a4Preset: "executive-2page",
+        maxBullets: 7,
+        summaryLengthWords: 180,
+        fontSizePt: 10.5,
+        sectionTitleSizePt: 13,
+      }));
+    }
+  };
+
+  const handleBaseTemplateChange = (templateId: string) => {
+    let suggestedTag = directiveForm.targetIndustry;
+    let suggestedPrompt = directiveForm.customInstructions;
+
+    if (templateId === "aviation-hospitality") {
+      suggestedTag = "Aviation / Cabin Crew";
+      suggestedPrompt = "Enforce strict single-page airline format, highlight passenger diplomacy, bilingual competencies, conflict resolution, and 5-star in-flight hospitality standards.";
+    } else if (templateId === "ats-conservative") {
+      suggestedTag = "Corporate & Finance";
+      suggestedPrompt = "Preserve chronological work history, prioritize standard ATS headings, eliminate ambiguous formatting, and enforce exact keyword match.";
+    } else if (templateId === "ats-aggressive") {
+      suggestedTag = "High-Volume ATS";
+      suggestedPrompt = "Maximize keyword density, rewrite bullet points for 95%+ ATS parsing score, and front-load critical industry competencies.";
+    } else if (templateId === "executive") {
+      suggestedTag = "Executive Leadership";
+      suggestedPrompt = "Emphasize multi-million dollar P&L accountability, board governance, executive communication, and organizational transformation.";
+    } else if (templateId === "tech") {
+      suggestedTag = "Software Engineering";
+      suggestedPrompt = "Highlight technical architecture, cloud scalability, hard engineering competencies, and quantifiable system performance metrics.";
+    } else if (templateId === "blank") {
+      suggestedPrompt = "";
+    }
+
+    setDirectiveForm((prev) => ({
+      ...prev,
+      baseTemplateId: templateId,
+      targetIndustry: suggestedTag,
+      customInstructions: suggestedPrompt,
+    }));
+  };
+
+  const handleSaveAndActivate = (activate: boolean = true) => {
+    const name = directiveForm.name.trim();
+    if (!name) {
+      toast.error("Directive name is required.");
+      return;
+    }
+
+    const id = directiveForm.id || slugifyProfileId(name);
+    const baseTemplate = directiveForm.baseTemplateId !== "blank" && directiveForm.baseTemplateId !== "custom"
+      ? (mergedProfiles.find((p) => p.id === directiveForm.baseTemplateId) || BUILT_IN_PROFILES["aviation-hospitality"])
+      : null;
+
+    const baseOverrides: Partial<OptimizerDirectiveConfig> = baseTemplate
+      ? JSON.parse(JSON.stringify(baseTemplate.overrides || {}))
+      : {};
+
+    const tags = [
+      directiveForm.targetIndustry.trim(),
+      "custom",
+      directiveForm.a4Preset === "strict-1page" ? "1-page" : directiveForm.a4Preset === "executive-2page" ? "2-page" : "standard"
+    ].filter(Boolean);
+
+    const overrides: Partial<OptimizerDirectiveConfig> = {
+      ...baseOverrides,
+      selectedProfileId: id,
+      customDirectiveOverride: directiveForm.customInstructions.trim() || undefined,
+      experienceBulletsPerEntry: directiveForm.maxBullets,
+      summaryMaxWords: directiveForm.summaryLengthWords,
+      summaryMinWords: Math.max(25, Math.floor(directiveForm.summaryLengthWords * 0.4)),
+      bodyFontSizePt: directiveForm.fontSizePt,
+      sectionTitleSizePt: directiveForm.sectionTitleSizePt,
+      pageSize: "A4",
+      agentDirectives: {
+        ...(baseOverrides.agentDirectives || SEED_OPTIMIZER_DIRECTIVE.agentDirectives),
+        summary: {
+          ...(baseOverrides.agentDirectives?.summary || SEED_OPTIMIZER_DIRECTIVE.agentDirectives.summary),
+          maxCharacters: directiveForm.summaryLengthWords * 7,
+        },
+        experience: {
+          ...(baseOverrides.agentDirectives?.experience || SEED_OPTIMIZER_DIRECTIVE.agentDirectives.experience),
+          rewriteBulletsOnly: true,
+        },
+        guardian: {
+          ...(baseOverrides.agentDirectives?.guardian || SEED_OPTIMIZER_DIRECTIVE.agentDirectives.guardian),
+          enforcePageUtilization: true,
+          enforceContentLength: true,
+        },
+      },
+    };
+
+    const newProfile: DirectiveProfile = {
+      id,
+      name,
+      description: directiveForm.targetIndustry.trim()
+        ? `Target: ${directiveForm.targetIndustry.trim()}. Custom directive profile with ${directiveForm.a4Preset} A4 constraints.`
+        : "Custom user-created directive profile for targeted resume optimization.",
+      tags,
+      overrides,
+    };
+
+    const nextList = [...customProfiles.filter((p) => p.id !== id), newProfile];
+    saveCustomProfiles(nextList);
+
+    if (activate) {
+      const activatedDraft = applyProfileToConfig(draft, newProfile);
+      activatedDraft.selectedProfileId = id;
+      if (directiveForm.customInstructions.trim()) {
+        activatedDraft.customDirectiveOverride = directiveForm.customInstructions.trim();
+      }
+      activatedDraft.experienceBulletsPerEntry = directiveForm.maxBullets;
+      activatedDraft.summaryMaxWords = directiveForm.summaryLengthWords;
+      activatedDraft.bodyFontSizePt = directiveForm.fontSizePt;
+      activatedDraft.sectionTitleSizePt = directiveForm.sectionTitleSizePt;
+      setDraft(activatedDraft);
+      update(activatedDraft);
+      setDirty(false);
+      setEditingProfileId(id);
+      toast.success(`Directive Profile "${name}" saved and set as active!`);
+    } else {
+      toast.success(`Directive Profile "${name}" saved.`);
+    }
+
+    setCreateDirectiveOpen(false);
+  };
+
+  const confirmDeleteProfile = (profile: DirectiveProfile) => {
+    if (isBuiltInProfile(profile.id)) {
+      toast.error("Built-in system profiles are protected and cannot be deleted.");
+      return;
+    }
+    setProfileToDelete({ id: profile.id, name: profile.name });
+  };
+
+  const handleExecuteDelete = () => {
+    if (!profileToDelete) return;
+    const { id, name } = profileToDelete;
+
+    const isActive = (draft.selectedProfileId || "aviation-hospitality") === id || (config.selectedProfileId || "aviation-hospitality") === id;
+
+    deleteCustomDirectiveProfile(id);
+
+    if (isActive) {
+      const fallback = BUILT_IN_PROFILES["aviation-hospitality"];
+      const fallbackConfig = fallback ? applyProfileToConfig(draft, fallback) : { ...draft };
+      fallbackConfig.selectedProfileId = "aviation-hospitality";
+      setDraft(fallbackConfig);
+      update(fallbackConfig);
+      setDirty(false);
+      setEditingProfileId(null);
+      toast.success(`Directive "${name}" deleted. Active profile automatically reverted to default Aviation / Hospitality.`);
+    } else {
+      if (editingProfileId === id) setEditingProfileId(null);
+      toast.success(`Directive "${name}" deleted.`);
+    }
+
+    setProfileToDelete(null);
+  };
 
   const openSaveProfileDialog = () => {
     setProfileForm({ overwriteId: "__new__", name: "", description: "", tags: "" });
@@ -517,20 +773,34 @@ export function OptimizerDirective() {
 
       {/* DIRECTIVE PROFILE SELECTOR + EDITOR */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2"><Icon name="Layers" className="w-4 h-4 text-brand" /> Directive Profile</CardTitle>
-          <CardDescription>
-            Select a pre-built directive profile to instantly configure all optimization parameters for a specific use case. 
-            This is the recommended way to tune optimization behavior — no manual settings required. Save your current
-            settings as a custom profile, or customize any built-in.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={openSaveProfileDialog} className="gap-2">
-              <Icon name="Save" className="w-4 h-4" /> Save current settings as profile
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3">
+          <div className="space-y-1">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Icon name="Layers" className="w-4 h-4 text-brand" /> Directive Profile
+            </CardTitle>
+            <CardDescription>
+              Select a pre-built directive profile or manage custom directive profiles tailored for specific roles, airlines, and companies.
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              onClick={openNewDirectiveModal}
+              className="bg-brand hover:bg-brand-dark text-white gap-1.5 shadow-sm"
+              size="sm"
+            >
+              <Icon name="Plus" className="w-4 h-4" /> Create New Directive Profile
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openSaveProfileDialog}
+              className="gap-1.5 hidden md:flex"
+            >
+              <Icon name="Save" className="w-3.5 h-3.5" /> Snapshot Current
             </Button>
           </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
           {editingProfile && (
             <div className="rounded-lg bg-brand/10 dark:bg-brand/20 border border-brand/30 p-3 flex items-center justify-between flex-wrap gap-2">
               <span className="text-sm flex items-center gap-2 text-foreground">
@@ -552,7 +822,7 @@ export function OptimizerDirective() {
               const beingEdited = editingProfileId === profile.id;
               const isActive = (draft.selectedProfileId || "aviation-hospitality") === profile.id;
               return (
-                <div key={profile.id} className={`relative flex flex-col items-start p-3 rounded-lg border text-left transition-all ${beingEdited ? "border-brand bg-brand/5 dark:bg-brand/10 ring-1 ring-brand" : isActive ? "border-emerald-600/60 bg-emerald-500/5 ring-1 ring-emerald-500/30" : "border-input bg-background hover:bg-secondary/40 hover:border-brand/40"}`}>
+                <div key={profile.id} className={`relative flex flex-col items-start p-3 rounded-lg border text-left transition-all ${beingEdited ? "border-brand bg-brand/5 dark:bg-brand/10 ring-1 ring-brand" : isActive ? "border-emerald-600/60 bg-emerald-500/5 ring-1 ring-emerald-500/30 shadow-sm" : "border-input bg-background hover:bg-secondary/40 hover:border-brand/40"}`}>
                   <button
                     onClick={() => {
                       const merged = applyProfileToConfig(draft, profile);
@@ -567,7 +837,7 @@ export function OptimizerDirective() {
                     className="w-full text-left"
                   >
                     <div className="flex items-start justify-between gap-2 pr-1">
-                      <span className="text-sm font-semibold">{profile.name}</span>
+                      <span className="text-sm font-semibold text-foreground">{profile.name}</span>
                       {isActive && (
                         <Badge className="text-[9px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0 font-medium">
                           Active
@@ -581,7 +851,7 @@ export function OptimizerDirective() {
                   </button>
                   <div className="absolute top-2 right-2 flex items-center gap-1">
                     {customized && (
-                      <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                      <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${!builtIn ? "bg-brand/5 border-brand/30 text-brand font-medium" : ""}`}>
                         {builtIn ? "Modified" : "Custom"}
                       </Badge>
                     )}
@@ -589,26 +859,42 @@ export function OptimizerDirective() {
                   <div className="w-full flex items-center gap-1 mt-2 pt-2 border-t border-border/60">
                     <span className="text-[10px] uppercase font-bold tracking-wide text-muted-foreground mr-auto">{beingEdited ? "Editing" : builtIn ? "Built-in" : "Custom"}</span>
                     <button
-                      onClick={() => openProfileEditor(profile)}
-                      title="Edit profile — open the parameter editor"
-                      className="h-6 w-6 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
+                      onClick={() => builtIn ? openProfileEditor(profile) : openEditCustomDirectiveModal(profile)}
+                      title={builtIn ? "Edit profile — open the parameter editor" : "Edit custom directive profile"}
+                      className="h-6 w-6 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={`Edit ${profile.name}`}
                     >
                       <Icon name="Pencil" className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => saveIntoProfile(profile.id)}
-                      title="Save your CURRENT settings into this profile (customizing a built-in keeps its factory definition recoverable)"
-                      className="h-6 w-6 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground"
+                      title="Save your CURRENT settings into this profile"
+                      className="h-6 w-6 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={`Save current into ${profile.name}`}
                     >
                       <Icon name="Save" className="w-3.5 h-3.5" />
                     </button>
-                    {customized && (
+                    {customized && builtIn && (
                       <button
                         onClick={() => deleteProfile(profile.id)}
-                        title={builtIn ? "Restore factory definition (removes your customization)" : "Delete this custom profile"}
-                        className="h-6 w-6 grid place-items-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                        title="Restore factory definition (removes your customization)"
+                        className="h-6 w-6 grid place-items-center rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                        aria-label={`Restore ${profile.name}`}
                       >
-                        <Icon name={builtIn ? "RotateCcw" : "Trash2"} className="w-3.5 h-3.5" />
+                        <Icon name="RotateCcw" className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {!builtIn && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmDeleteProfile(profile);
+                        }}
+                        title="Delete this custom directive profile"
+                        className="h-6 w-6 grid place-items-center rounded hover:bg-destructive/15 text-destructive/80 hover:text-destructive transition-colors ml-0.5"
+                        aria-label={`Delete custom directive ${profile.name}`}
+                      >
+                        <Icon name="Trash2" className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
@@ -617,10 +903,24 @@ export function OptimizerDirective() {
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Click a card to apply it. The pencil (Edit) loads that profile into the form below for fine-tuning — "Update profile" then saves it back in place, or "Save current settings as profile" forks your changes into a new one. The disk icon saves your CURRENT settings into that profile without loading it first. The trash icon deletes a custom profile; the restore icon returns a customized built-in to its factory definition. "Save current settings as profile" snapshots EVERYTHING (agents, limits, layout) into a reusable profile; saving over a built-in's name in the overwrite list customizes it while keeping the factory definition recoverable.
+            Click a card to apply it. Built-in system profiles are protected and cannot be deleted. Custom directive profiles can be created, updated via the pencil icon, and deleted using the trash icon. If an active custom directive is deleted, the optimizer automatically reverts to the default Aviation / Hospitality profile.
           </p>
         </CardContent>
       </Card>
+
+      {/* DEDICATED CUSTOM DIRECTIVE MANAGER */}
+      <DirectiveManager
+        selectedProfileId={draft.selectedProfileId}
+        onProfileSelect={(profile) => {
+          const merged = applyProfileToConfig(draft, profile);
+          if (merged) {
+            merged.selectedProfileId = profile.id;
+            setDraft(merged);
+            setDirty(true);
+            setEditingProfileId(profile.id);
+          }
+        }}
+      />
 
       {/* STRUCTURAL BLUEPRINT SKELETON REFERENCE LIBRARY */}
       <Card>
@@ -830,6 +1130,294 @@ export function OptimizerDirective() {
             <Button variant="outline" onClick={() => setProfileFormOpen(false)}>Cancel</Button>
             <Button onClick={saveAsProfile} className="bg-brand hover:bg-brand-dark text-white gap-2">
               <Icon name="Check" className="w-4 h-4" /> Save profile
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CREATE / EDIT CUSTOM DIRECTIVE PROFILE DIALOG */}
+      <Dialog open={createDirectiveOpen} onOpenChange={setCreateDirectiveOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <Icon name={isEditingExisting ? "Pencil" : "Sparkles"} className="w-5 h-5 text-brand" />
+              {isEditingExisting ? "Edit Directive Profile" : "Create New Directive Profile"}
+            </DialogTitle>
+            <DialogDescription>
+              Define tailored AI optimization instructions, role positioning, and strict A4 page constraints for target industries and airlines.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            {/* Directive Name */}
+            <div>
+              <Label htmlFor="dir-create-name" className="text-sm font-semibold flex items-center justify-between">
+                <span>Directive Profile Name <span className="text-destructive">*</span></span>
+                <span className="text-xs text-muted-foreground font-normal">e.g., Qatar Duty Free - Strict One Page</span>
+              </Label>
+              <Input
+                id="dir-create-name"
+                value={directiveForm.name}
+                onChange={(e) => setDirectiveForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Qatar Duty Free - Strict One Page"
+                className="mt-1"
+              />
+            </div>
+
+            {/* Target Industry / Role Tag */}
+            <div>
+              <Label htmlFor="dir-create-tag" className="text-sm font-semibold">
+                Target Industry / Role Tag
+              </Label>
+              <Input
+                id="dir-create-tag"
+                value={directiveForm.targetIndustry}
+                onChange={(e) => setDirectiveForm((f) => ({ ...f, targetIndustry: e.target.value }))}
+                placeholder="e.g. Airport Retail, Cabin Crew, Corporate"
+                className="mt-1"
+              />
+              <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                <span className="text-[11px] text-muted-foreground font-medium mr-1">Quick presets:</span>
+                {[
+                  "Airport Retail",
+                  "Cabin Crew",
+                  "VIP Aviation",
+                  "Hospitality Management",
+                  "Corporate Operations",
+                  "Ground Handling",
+                  "Engineering / IT",
+                ].map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setDirectiveForm((f) => ({ ...f, targetIndustry: tag }))}
+                    className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                      directiveForm.targetIndustry === tag
+                        ? "bg-brand text-white border-brand font-medium"
+                        : "bg-secondary/60 hover:bg-secondary border-border text-foreground"
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Base Template Selector */}
+            <div>
+              <Label htmlFor="dir-create-base" className="text-sm font-semibold">
+                Base Template Selector
+              </Label>
+              <select
+                id="dir-create-base"
+                value={directiveForm.baseTemplateId}
+                onChange={(e) => handleBaseTemplateChange(e.target.value)}
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm mt-1"
+              >
+                <option value="aviation-hospitality">Aviation / Hospitality (InfoHAS Signature Profile)</option>
+                <option value="ats-conservative">ATS Conservative (Safe & Structure-Preserving)</option>
+                <option value="ats-aggressive">ATS Aggressive (Maximum Keyword Density)</option>
+                <option value="executive">Executive / High-End (Leadership & Narrative)</option>
+                <option value="tech">Tech / Engineering (Hard Skills & Architecture)</option>
+                <option value="blank">Start Blank (Clean Baseline Slate)</option>
+              </select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Clones baseline weights and ATS thresholds from the selected template while applying your custom directives below.
+              </p>
+            </div>
+
+            {/* Custom Instructions Field */}
+            <div>
+              <Label htmlFor="dir-create-prompt" className="text-sm font-semibold flex items-center justify-between">
+                <span>Custom Instructions (System Prompt / Directive Override)</span>
+                <span className="text-[11px] text-brand font-mono">Injected into Optimizer</span>
+              </Label>
+              <Textarea
+                id="dir-create-prompt"
+                value={directiveForm.customInstructions}
+                onChange={(e) => setDirectiveForm((f) => ({ ...f, customInstructions: e.target.value }))}
+                placeholder="Enter custom AI prompt instructions (e.g. 'Enforce strict 1-page A4 format, highlight duty-free sales targets, passenger diplomacy, Qatar Airways 5-star hospitality standards, and high-impact action verbs.')..."
+                rows={4}
+                className="mt-1 font-sans text-xs leading-relaxed"
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Specific system prompt injected directly into the multi-agent optimization pipeline to control bullet formulation, tone, and priority keywords.
+              </p>
+            </div>
+
+            {/* A4 Constraint Presets */}
+            <div className="border border-border/80 rounded-lg p-3 bg-secondary/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-sm font-semibold flex items-center gap-1.5">
+                    <Icon name="FileText" className="w-4 h-4 text-brand" /> A4 Constraint Presets
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Quickly toggle bullet limits, summary word count, and typographic scaling to guarantee clean page fit.
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px] font-mono capitalize">
+                  {directiveForm.a4Preset.replace("-", " ")}
+                </Badge>
+              </div>
+
+              {/* Toggle Buttons for Presets */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => applyA4Preset("strict-1page")}
+                  className={`p-2.5 rounded-md border text-left transition-all ${
+                    directiveForm.a4Preset === "strict-1page"
+                      ? "border-brand bg-brand/10 dark:bg-brand/20 ring-1 ring-brand text-brand"
+                      : "border-input bg-background hover:bg-secondary/40 text-foreground"
+                  }`}
+                >
+                  <div className="text-xs font-semibold">Strict 1-Page</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">Max 4 bullets • 70w summary • 9.5pt font</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyA4Preset("standard")}
+                  className={`p-2.5 rounded-md border text-left transition-all ${
+                    directiveForm.a4Preset === "standard"
+                      ? "border-brand bg-brand/10 dark:bg-brand/20 ring-1 ring-brand text-brand"
+                      : "border-input bg-background hover:bg-secondary/40 text-foreground"
+                  }`}
+                >
+                  <div className="text-xs font-semibold">Standard Pro</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">Max 5 bullets • 110w summary • 10.0pt font</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyA4Preset("executive-2page")}
+                  className={`p-2.5 rounded-md border text-left transition-all ${
+                    directiveForm.a4Preset === "executive-2page"
+                      ? "border-brand bg-brand/10 dark:bg-brand/20 ring-1 ring-brand text-brand"
+                      : "border-input bg-background hover:bg-secondary/40 text-foreground"
+                  }`}
+                >
+                  <div className="text-xs font-semibold">Executive 2-Page</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">Max 7 bullets • 180w summary • 10.5pt font</div>
+                </button>
+              </div>
+
+              {/* Fine-Tuning Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-border/50">
+                <div>
+                  <Label htmlFor="dir-bullets" className="text-[11px] text-muted-foreground">Max Bullets / Role</Label>
+                  <Input
+                    id="dir-bullets"
+                    type="number"
+                    min={2}
+                    max={10}
+                    value={directiveForm.maxBullets}
+                    onChange={(e) => setDirectiveForm((f) => ({ ...f, maxBullets: Number(e.target.value) || 4, a4Preset: "custom" }))}
+                    className="h-8 text-xs mt-0.5"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="dir-summary-words" className="text-[11px] text-muted-foreground">Summary Max Words</Label>
+                  <Input
+                    id="dir-summary-words"
+                    type="number"
+                    min={30}
+                    max={300}
+                    step={5}
+                    value={directiveForm.summaryLengthWords}
+                    onChange={(e) => setDirectiveForm((f) => ({ ...f, summaryLengthWords: Number(e.target.value) || 75, a4Preset: "custom" }))}
+                    className="h-8 text-xs mt-0.5"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="dir-font-pt" className="text-[11px] text-muted-foreground">Body Font (pt)</Label>
+                  <Input
+                    id="dir-font-pt"
+                    type="number"
+                    min={8}
+                    max={13}
+                    step={0.5}
+                    value={directiveForm.fontSizePt}
+                    onChange={(e) => setDirectiveForm((f) => ({ ...f, fontSizePt: Number(e.target.value) || 9.5, a4Preset: "custom" }))}
+                    className="h-8 text-xs mt-0.5"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="dir-title-pt" className="text-[11px] text-muted-foreground">Section Title (pt)</Label>
+                  <Input
+                    id="dir-title-pt"
+                    type="number"
+                    min={10}
+                    max={16}
+                    step={0.5}
+                    value={directiveForm.sectionTitleSizePt}
+                    onChange={(e) => setDirectiveForm((f) => ({ ...f, sectionTitleSizePt: Number(e.target.value) || 11, a4Preset: "custom" }))}
+                    className="h-8 text-xs mt-0.5"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2 pt-2 border-t">
+            <Button variant="outline" onClick={() => setCreateDirectiveOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => handleSaveAndActivate(false)}
+              className="gap-1.5"
+            >
+              <Icon name="Save" className="w-4 h-4" /> Save Profile Only
+            </Button>
+            <Button
+              onClick={() => handleSaveAndActivate(true)}
+              className="bg-brand hover:bg-brand-dark text-white gap-1.5 shadow-sm font-medium"
+            >
+              <Icon name="CheckCircle" className="w-4 h-4" /> Save & Activate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CONFIRM DELETE CUSTOM DIRECTIVE PROFILE DIALOG */}
+      <Dialog open={!!profileToDelete} onOpenChange={(open) => { if (!open) setProfileToDelete(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Icon name="Trash2" className="w-5 h-5 text-destructive" /> Delete Directive Profile
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the custom directive profile <strong>&ldquo;{profileToDelete?.name}&rdquo;</strong>?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="text-xs text-muted-foreground bg-destructive/10 border border-destructive/20 rounded-md p-3 space-y-2">
+            <p className="font-semibold text-destructive flex items-center gap-1.5">
+              <Icon name="AlertTriangle" className="w-4 h-4 text-destructive shrink-0" />
+              <span>This action cannot be undone.</span>
+            </p>
+            <p>
+              The directive profile will be permanently removed from your active profile list, browser local storage, and Firestore database.
+            </p>
+            {(draft.selectedProfileId === profileToDelete?.id || config.selectedProfileId === profileToDelete?.id) && (
+              <div className="pt-2 border-t border-destructive/20 text-amber-700 dark:text-amber-300 font-medium">
+                <strong>Automatic Fallback:</strong> This profile is currently active. Deleting it will automatically reset your active optimizer directive to the default <em>Aviation / Hospitality</em> profile.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setProfileToDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleExecuteDelete}
+              className="gap-1.5 shadow-sm"
+            >
+              <Icon name="Trash2" className="w-4 h-4" /> Delete Directive
             </Button>
           </DialogFooter>
         </DialogContent>

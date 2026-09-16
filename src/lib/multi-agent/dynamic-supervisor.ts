@@ -16,7 +16,8 @@
 // ============================================================================
 
 import type { ResumeData, JobDescription } from "../types";
-import { uid } from "../store";
+import { uid, useApp } from "../store";
+import { buildOptimizationPolicy, formatPolicyForPrompt } from "../directive-policy";
 import type {
   AgentPatch,
   AgentTask,
@@ -86,7 +87,17 @@ export class DynamicMultiAgentSupervisor {
     const editableFields = this.determineEditableFields();
     const dynamicSections = this.extractDynamicSections(canonicalResume);
 
-    // Step 2: Build agent context
+    // Step 2: Build agent context with authoritative Optimization Directive
+    let directiveConfig = null;
+    let optimizationPolicy = undefined;
+    try {
+      directiveConfig = (useApp.getState() as any)?.optimizerDirective ?? null;
+      if (directiveConfig) {
+        const policy = buildOptimizationPolicy(directiveConfig, canonicalResume);
+        optimizationPolicy = formatPolicyForPrompt(policy);
+      }
+    } catch {}
+
     const agentContext: AgentContext = {
       canonicalResume,
       jobDescription: jobDescription || "",
@@ -98,6 +109,8 @@ export class DynamicMultiAgentSupervisor {
       editableFields,
       dynamicSections,
       previousPatches: [],
+      optimizationPolicy,
+      directiveConfig,
     };
 
     // Step 3: Run the optimization rounds

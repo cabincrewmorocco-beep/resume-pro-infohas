@@ -179,11 +179,16 @@ const ADMIN_VIEWS: ViewKey[] = [
  *   - "admin" → NAV_USER + NAV_ADMIN views (admin overview, users, analytics)
  *   - "super_admin" → all views (including AI providers, branding, feature flags, logs)
  */
-function canAccessView(view: ViewKey, role: string): boolean {
+function canAccessView(view: ViewKey, role: string, hideDevAgent = true): boolean {
+  // Developer Agent views restriction
+  if ((view === "ai-dev-agent" || view === "ai-workspace") && hideDevAgent && role !== "admin" && role !== "super_admin") {
+    return false;
+  }
   // Super admin can access everything
   if (role === "super_admin") return true;
-  // Admin can access user + admin views (but NOT super-admin views)
+  // Admin can access user + admin views, plus dev agent
   if (role === "admin") {
+    if (view === "ai-dev-agent" || view === "ai-workspace") return true;
     return !SUPER_ADMIN_VIEWS.includes(view);
   }
   // Regular user can only access user views (NOT admin or super-admin views)
@@ -195,6 +200,7 @@ export function AppShell() {
   const setView = useApp((s) => s.setView);
   const user = useApp((s) => s.user);
   const role = user?.role ?? "user";
+  const hideDevAgent = useApp((s) => s.aiDevSettings?.hideDevAgentFromNonAdmin ?? true);
   const fallbackOfferOpen = useApp((s) => s.fallbackOfferOpen);
 
   // Task 19 — bootstrap Puter account restore.
@@ -215,25 +221,28 @@ export function AppShell() {
   // seeing AI Providers, API settings, branding, feature flags, etc. even if
   // they somehow trigger setView("ai-providers").
   useEffect(() => {
-    if (!canAccessView(view, role)) {
+    if (!canAccessView(view, role, hideDevAgent)) {
       console.warn(`[AppShell] Access denied: user role "${role}" cannot view "${view}". Redirecting to dashboard.`);
       setView("dashboard");
     }
-  }, [view, role, setView]);
+  }, [view, role, hideDevAgent, setView]);
 
   // If the view is restricted, render the dashboard while the redirect effect runs
-  const effectiveView = canAccessView(view, role) ? view : "dashboard";
+  const effectiveView = canAccessView(view, role, hideDevAgent) ? view : "dashboard";
   // Build a friendly label for the error boundary based on the view
   const viewLabel = effectiveView.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const ActiveView = VIEW_COMPONENTS[effectiveView] ?? Dashboard;
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex bg-background w-full max-w-full overflow-x-hidden">
       <GlobalErrorCatcher />
       <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 w-full overflow-x-hidden">
         <TopBar />
-        <main className="flex-1 p-4 sm:p-6 max-w-[1400px] w-full mx-auto overflow-x-hidden">
+        <main
+          className="flex-1 p-3 sm:p-4 md:p-6 max-w-[1400px] w-full mx-auto overflow-x-hidden [container-type:inline-size]"
+          style={{ containerType: "inline-size" }}
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={effectiveView}
@@ -241,6 +250,7 @@ export function AppShell() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.2 }}
+              className="w-full max-w-full min-w-0"
             >
               <SafeRender label={viewLabel}>
                 <ActiveView />

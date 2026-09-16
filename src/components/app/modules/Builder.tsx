@@ -1913,10 +1913,6 @@ ${resumeContext}
   const onImport = async (files: FileList | null) => {
     if (!files?.[0]) return;
     const file = files[0];
-    if (file.size > 20 * 1024 * 1024) {
-      toast.error("File too large. Maximum 20MB.");
-      return;
-    }
     setImporting(true);
     try {
       const parsed = await parseResumeFile(file);
@@ -2118,8 +2114,8 @@ ${resumeContext}
               Translate
             </Button>
           </div>
-          {/* Import button — accepts PDF/DOCX/DOC/TXT, parses into all fields */}
-          <input ref={importFileRef} type="file" accept=".pdf,.docx,.doc,.txt" className="hidden" onChange={(e) => onImport(e.target.files)} />
+          {/* Import button — accepts PDF/DOCX/TXT, parses into all fields */}
+          <input ref={importFileRef} type="file" accept=".pdf,.docx,.txt" className="hidden" onChange={(e) => onImport(e.target.files)} />
           <Button variant="outline" size="sm" onClick={() => importFileRef.current?.click()} disabled={importing} className="gap-1.5 border-brand text-brand hover:bg-brand-light h-8" title="Import a resume from PDF, DOCX, or TXT — extracts all fields automatically">
             {importing ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="Upload" className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">Import</span>

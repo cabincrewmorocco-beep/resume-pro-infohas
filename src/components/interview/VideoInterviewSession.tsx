@@ -31,6 +31,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge, Icon, ScoreRing } from "@/components/shared";
+import { cn } from "@/lib/utils";
 import {
   useDeviceCheck,
   useMediaRecorder,
@@ -57,6 +58,129 @@ import { uid } from "@/lib/store";
 import { toast } from "sonner";
 import type { InterviewRecordingMeta } from "@/hooks/interview/types";
 import type { InterviewPackage, ResumeData, JobDescription } from "@/lib/types";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(errorMessage);
+      err.name = "TimeoutError";
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+interface CandidateVideoAvatarProps {
+  mode: "audio-only" | "simulated";
+  audioLevel?: number;
+  label?: string;
+  subLabel?: string;
+  badgeText?: string;
+  badgeIcon?: string;
+  overlayCountdown?: number | null;
+  overlayTimer?: string | null;
+  isRecording?: boolean;
+}
+
+function CandidateVideoAvatar({
+  mode,
+  audioLevel = 0,
+  label,
+  subLabel,
+  badgeText,
+  badgeIcon,
+  overlayCountdown,
+  overlayTimer,
+  isRecording,
+}: CandidateVideoAvatarProps) {
+  const pulseScale = 1 + Math.min(0.25, audioLevel * 1.5);
+  const isAudioOnly = mode === "audio-only";
+
+  return (
+    <div className="relative w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-800 to-slate-950 select-none overflow-hidden p-4">
+      {/* Background ambient lighting */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(37,99,235,0.15),transparent_70%)] pointer-events-none" />
+
+      {/* Top Left Badge */}
+      <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/60 backdrop-blur-sm px-2.5 py-1 rounded-full border border-white/10">
+        <Icon name={badgeIcon || (isAudioOnly ? "Mic" : "Sparkles")} className="w-3.5 h-3.5 text-brand" />
+        <span>{badgeText || (isAudioOnly ? "Audio-Only Mode" : "Simulation / Practice Mode")}</span>
+      </div>
+
+      {/* Top Right Timer Overlay if present */}
+      {overlayTimer && (
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-brand/90 px-2.5 py-1 rounded-full shadow-sm">
+          <Icon name="Clock" className="w-3 h-3" /> {overlayTimer}
+        </div>
+      )}
+
+      {/* Avatar with reactive audio wave rings */}
+      <div className="relative flex items-center justify-center my-2">
+        <div
+          className={cn(
+            "absolute rounded-full border transition-transform duration-100 ease-out",
+            isAudioOnly ? "border-emerald-500/30 bg-emerald-500/5" : "border-indigo-500/30 bg-indigo-500/5"
+          )}
+          style={{
+            width: "120px",
+            height: "120px",
+            transform: `scale(${pulseScale})`,
+          }}
+        />
+        <div
+          className={cn(
+            "absolute rounded-full border transition-transform duration-100 ease-out",
+            isAudioOnly ? "border-emerald-500/50" : "border-indigo-500/50"
+          )}
+          style={{
+            width: "96px",
+            height: "96px",
+            transform: `scale(${1 + Math.min(0.15, audioLevel)})`,
+          }}
+        />
+
+        <div
+          className={cn(
+            "relative w-20 h-20 rounded-full flex items-center justify-center shadow-xl border",
+            isAudioOnly
+              ? "bg-emerald-950/80 border-emerald-500/60 text-emerald-400"
+              : "bg-indigo-950/80 border-indigo-500/60 text-indigo-300"
+          )}
+        >
+          <Icon name={isAudioOnly ? "Mic" : "UserCheck"} className="w-9 h-9" />
+          {isRecording && (
+            <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full ring-2 ring-slate-900 animate-ping" />
+          )}
+        </div>
+      </div>
+
+      <h3 className="text-sm font-semibold text-white tracking-wide mt-2">
+        {label || (isAudioOnly ? "Microphone Input Active" : "Candidate Practice Mode")}
+      </h3>
+      <p className="text-xs text-slate-400 mt-0.5 max-w-xs text-center px-4">
+        {subLabel ||
+          (isAudioOnly
+            ? "Your voice is captured for transcription and analysis."
+            : "Camera & mic bypassed — practice your STAR delivery freely.")}
+      </p>
+
+      {/* Countdown overlay if active */}
+      {overlayCountdown != null && overlayCountdown > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-[2px] pointer-events-none">
+          <div className="text-center">
+            <div className="text-7xl sm:text-8xl font-bold text-white tabular-nums drop-shadow-2xl animate-pulse">
+              {overlayCountdown}
+            </div>
+            <p className="text-xs text-white/90 mt-1">Get ready to speak</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PREP_MS = 30_000;
 const REC_COUNTDOWN_MS = 3_000;
@@ -104,15 +228,19 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [finalReport, setFinalReport] = useState<InterviewFinalReport | null>(null);
   const [generatingReport, setGeneratingReport] = useState(false);
+  // Camera & recording mode: "video" (default), "audio-only", or "simulated" (practice mode)
+  const [sessionMode, setSessionMode] = useState<"video" | "audio-only" | "simulated">("video");
+  // Simulated recording state when hardware recorder or permissions are bypassed
+  const [isSimulatedRecording, setIsSimulatedRecording] = useState(false);
+  const [simulatedElapsedMs, setSimulatedElapsedMs] = useState(0);
+  const simulatedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // Camera activation state — drives the inline preview + retry button shown
-  // during prep & countdown. The camera is requested as soon as the session
-  // mounts (not deferred to recording start) so the user sees themselves and
-  // can verify the device works without leaving for the Device Check tab.
+  // during prep & countdown.
   const [cameraActivating, setCameraActivating] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  // Local ref to the live MediaStream — updated every time we acquire a new
-  // stream. Using a ref (not state) means we can read it synchronously inside
-  // callbacks and effects without stale-closure issues.
+  // Local ref to the live MediaStream — updated every time we acquire a new stream.
   const liveStreamRef = useRef<MediaStream | null>(null);
 
   const { snapshot: deviceSnapshot, getStream, requestCameraAndMic, stopPreview } = useDeviceCheck({
@@ -121,9 +249,6 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
   });
 
   // ---- attach a stream to whichever <video> element is currently mounted ---
-  // Called imperatively every time either the stream changes or the phase
-  // changes (which remounts the <video> element). Much more reliable than a
-  // useEffect dependency array that can miss cases.
   const bindStream = useCallback((stream: MediaStream) => {
     const el = videoRef.current;
     if (!el) return;
@@ -131,40 +256,62 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
       el.srcObject = stream;
       el.muted = true;
     }
-    // Retry play() after a tick — some browsers reject play() before the
-    // element has been painted for the first time.
     el.play().catch(() => setTimeout(() => el.play().catch(() => {}), 150));
   }, []);
 
   // Preview audio meter — runs during prep & countdown so the user can verify
-  // their mic is picking up sound BEFORE the recording starts. The recorder
-  // has its own internal meter that takes over once recording begins.
+  // their mic is picking up sound BEFORE the recording starts.
   const previewMeter = useAudioMeter(0.08);
   const { start: startMeter, stop: stopMeter } = previewMeter;
 
-  // Live transcript for the active recording. Reset whenever we move to a new
-  // question or start a new recording.
+  // Live transcript for the active recording.
   const speech = useSpeechRecognition({ continuous: true, interimResults: false });
   const { start: startSpeech, stop: stopSpeech, reset: resetSpeech } = speech;
 
-  // Stable refs for cleanup — avoids adding `speech` and `previewMeter` to the
-  // unmount effect's dep array. Both hooks return a NEW plain object on every
-  // render (they contain state like `level`/`listening`), so including them as
-  // deps would cause the cleanup to fire on every re-render, calling
-  // stopPreview() 60×/sec (useAudioMeter ticks via requestAnimationFrame) and
-  // killing the camera stream the moment it is acquired.
   const stopPreviewRef = useRef(stopPreview);
   useEffect(() => { stopPreviewRef.current = stopPreview; }, [stopPreview]);
   const stopSpeechRef = useRef(stopSpeech);
   useEffect(() => { stopSpeechRef.current = stopSpeech; }, [stopSpeech]);
   const stopMeterRef = useRef(stopMeter);
   useEffect(() => { stopMeterRef.current = stopMeter; }, [stopMeter]);
+  const sessionModeRef = useRef(sessionMode);
+  useEffect(() => { sessionModeRef.current = sessionMode; }, [sessionMode]);
 
   const sessionId = useMemo(() => uid("sess"), []);
   const current = questions[currentIndex];
   const isLast = currentIndex === total - 1;
   const currentRec = recordings[current?.id ?? ""];
   const percent = Math.round(((currentIndex + 1) / Math.max(total, 1)) * 100);
+
+  // Clean up all media tracks and active timers
+  const cleanUpStreams = useCallback(() => {
+    try {
+      if (liveStreamRef.current) {
+        liveStreamRef.current.getTracks().forEach((track) => {
+          track.stop();
+        });
+        liveStreamRef.current = null;
+      }
+      stopPreviewRef.current();
+      stopSpeechRef.current();
+      stopMeterRef.current();
+      if (simulatedTimerRef.current) {
+        clearInterval(simulatedTimerRef.current);
+        simulatedTimerRef.current = null;
+      }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+    } catch (err) {
+      console.warn("Stream cleanup error:", err);
+    }
+  }, []);
+
+  const handleExit = useCallback(() => {
+    cleanUpStreams();
+    onClose();
+  }, [cleanUpStreams, onClose]);
 
   // ---- derived: video quality warning ---------------------------------------
   const videoQualityWarning = useMemo(() => {
@@ -190,80 +337,155 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
       return "This browser does not support navigator.mediaDevices. Use an up-to-date Chrome, Edge, Safari, or Firefox.";
     }
     if (!c.mediaRecorder) {
-      return "This browser does not support MediaRecorder. Recording will be unavailable.";
+      return "This browser does not support MediaRecorder. Recording will be simulated.";
     }
     return null;
   }, [deviceSnapshot.compatibility]);
 
-  // ---- ensure camera+mic stream when entering recording -------------------
+  // ---- ensure stream when entering recording -------------------
   const ensureStream = useCallback(async () => {
     let stream = getStream();
-    if (!stream || stream.getVideoTracks().length === 0) {
-      stream = await requestCameraAndMic();
+    if (!stream || !stream.active || stream.getTracks().length === 0) {
+      if (sessionMode === "audio-only") {
+        stream = await requestCameraAndMic({ video: false }).catch(() => null);
+      } else if (sessionMode === "video") {
+        stream = await requestCameraAndMic().catch(() => null);
+      }
+    }
+    if (stream) {
+      liveStreamRef.current = stream;
     }
     return stream;
-  }, [getStream, requestCameraAndMic]);
+  }, [getStream, requestCameraAndMic, sessionMode]);
 
-  // ---- activate camera early so the user sees a live preview during prep --
-  // This is the fix for the "no video frame during prep/countdown" issue: the
-  // camera is requested as soon as the session mounts AND whenever we move to
-  // a new question (which resets to the prep phase). The stream is attached to
-  // videoRef by useDeviceCheck, and the <video> element is rendered in all
-  // three phases (prep / countdown / recording) below. The same stream is
-  // reused by recorder.start() so there is no flicker between phases.
+  // ---- activate camera early with 5s timeout & graceful fallback cascade ----
   const activateCamera = useCallback(async () => {
     setCameraActivating(true);
     setCameraError(null);
     try {
-      const stream = await requestCameraAndMic();
-      if (!stream) {
-        setCameraError("Camera/microphone access failed. Check browser permissions and retry.");
-      } else {
+      // 1. Try Video + Audio first with a 5-second timeout
+      const stream = await withTimeout(
+        requestCameraAndMic(),
+        5000,
+        "Camera initialization timed out after 5 seconds"
+      ).catch((e) => {
+        console.warn("Video request error/timeout:", e);
+        return null;
+      });
+
+      if (stream && stream.getVideoTracks().length > 0 && stream.getVideoTracks().some((t) => t.readyState === "live")) {
         liveStreamRef.current = stream;
+        setSessionMode("video");
         bindStream(stream);
         startMeter(stream);
+        setCameraError(null);
+        setCameraActivating(false);
+        return;
+      }
+
+      // 2. Video failed/blocked or timed out — fallback automatically to Audio-Only
+      console.warn("Video stream unavailable or timed out. Falling back to Audio-Only...");
+      const audioStream = await withTimeout(
+        requestCameraAndMic({ video: false }),
+        5000,
+        "Microphone initialization timed out after 5 seconds"
+      ).catch(() => null);
+
+      if (audioStream && audioStream.getAudioTracks().length > 0 && audioStream.getAudioTracks().some((t) => t.readyState === "live")) {
+        liveStreamRef.current = audioStream;
+        setSessionMode("audio-only");
+        startMeter(audioStream);
+        setCameraError(null);
+        toast.info("Camera not available or blocked. Switched to Audio-Only mode.");
+      } else {
+        // 3. Audio also unavailable (e.g. iframe policy or no hardware) — fallback to Simulation / Practice Mode
+        console.warn("Audio stream also unavailable. Falling back to Simulation / Practice Mode...");
+        setSessionMode("simulated");
+        liveStreamRef.current = null;
+        setCameraError("Camera & microphone unavailable. Practice Mode active.");
+        toast.info("Practice Mode active. You can rehearse your response freely.");
       }
     } catch (e: any) {
-      setCameraError(e?.message || "Could not activate camera.");
+      setSessionMode("simulated");
+      liveStreamRef.current = null;
+      setCameraError(e?.message || "Could not activate devices. Running in Practice Mode.");
     } finally {
       setCameraActivating(false);
     }
   }, [requestCameraAndMic, bindStream, startMeter]);
 
+  const switchToAudioOnly = useCallback(async () => {
+    setCameraActivating(true);
+    try {
+      const audioStream = await requestCameraAndMic({ video: false }).catch(() => null);
+      if (audioStream && audioStream.getAudioTracks().length > 0) {
+        liveStreamRef.current = audioStream;
+        setSessionMode("audio-only");
+        startMeter(audioStream);
+        setCameraError(null);
+        toast.info("Switched to Audio-Only mode.");
+      } else {
+        setSessionMode("simulated");
+        toast.info("Switched to Practice / Simulation mode.");
+      }
+    } catch {
+      setSessionMode("simulated");
+    } finally {
+      setCameraActivating(false);
+    }
+  }, [requestCameraAndMic, startMeter]);
+
+  const switchToPracticeMode = useCallback(() => {
+    if (liveStreamRef.current) {
+      liveStreamRef.current.getTracks().forEach((t) => t.stop());
+      liveStreamRef.current = null;
+    }
+    stopPreview();
+    stopMeter();
+    setSessionMode("simulated");
+    setCameraError(null);
+    toast.info("Switched to Practice / Simulation mode.");
+  }, [stopPreview, stopMeter]);
+
   // On mount and whenever we return to the prep phase, request/reuse the stream.
   useEffect(() => {
     if (phase !== "prep") return;
+    if (sessionMode === "simulated") return;
     const existing = liveStreamRef.current;
-    if (existing && existing.getVideoTracks().some((t) => t.readyState === "live")) {
-      // Reuse existing live stream — just re-bind and restart meter.
-      bindStream(existing);
-      startMeter(existing);
-      return;
+    if (existing && existing.active && existing.getTracks().some((t) => t.readyState === "live")) {
+      if (sessionMode === "video" && existing.getVideoTracks().some((t) => t.readyState === "live")) {
+        bindStream(existing);
+        startMeter(existing);
+        return;
+      }
+      if (sessionMode === "audio-only" && existing.getAudioTracks().some((t) => t.readyState === "live")) {
+        startMeter(existing);
+        return;
+      }
     }
     void activateCamera();
-  }, [phase, currentIndex]); // intentionally stable — activateCamera/bindStream/startMeter are memoized
+  }, [phase, currentIndex, sessionMode, activateCamera, bindStream, startMeter]);
 
-  // Re-bind the stream whenever the phase changes (= <video> element remounted).
-  // This covers the prep→countdown→recording transitions where a new DOM node
-  // is mounted but the stream was already acquired during the prep phase.
+  // Re-bind the stream whenever the phase changes
   useEffect(() => {
     const stream = liveStreamRef.current;
-    if (!stream) return;
-    // Small delay to let React finish mounting the new <video> element before
-    // we try to attach srcObject and call play().
+    if (!stream || sessionMode !== "video") return;
     const id = setTimeout(() => bindStream(stream), 50);
     return () => clearTimeout(id);
-  }, [phase, bindStream]);
+  }, [phase, bindStream, sessionMode]);
 
   // ---- when a recording is finalized --------------------------------------
   const onRecorderComplete = useCallback(
     async (blob: Blob, mimeType: string, durationMs: number) => {
       const q = questions[currentIndex];
       if (!q) return;
-      // Stop speech recognition and freeze the transcript.
       stopSpeech();
-      // Stop the preview meter (recorder has its own).
       stopMeter();
+      if (simulatedTimerRef.current) {
+        clearInterval(simulatedTimerRef.current);
+        simulatedTimerRef.current = null;
+      }
+      setIsSimulatedRecording(false);
       const transcript = speech.transcript.trim();
       const id = uid("rec");
       const meta: InterviewRecordingMeta = {
@@ -291,26 +513,152 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
   );
 
   const recorder = useMediaRecorder({ maxDurationMs: MAX_REC_MS, onComplete: onRecorderComplete });
+  const recorderRef = useRef(recorder);
+  useEffect(() => { recorderRef.current = recorder; }, [recorder]);
 
-  const startRecording = useCallback(async () => {
-    try {
-      const stream = await ensureStream();
-      if (!stream) {
-        setError("Camera/microphone unavailable. Run the device check first.");
-        return;
-      }
-      // Stop the preview meter before the recorder starts its own internal
-      // meter on the same stream (two AnalyserNodes on one source is fine in
-      // Web Audio, but stopping the preview avoids double-RAF work).
-      stopMeter();
-      setPhase("recording");
-      resetSpeech();
-      startSpeech();
-      recorder.start(stream);
-    } catch (e: any) {
-      setError(e?.message || "Could not start recording.");
+  // ---- deterministic recorder starting with simulation fallback -----------
+  const executeStartRecording = useCallback(async () => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
-  }, [ensureStream, recorder, startSpeech, resetSpeech, stopMeter]);
+    setRecCountdown(0);
+    stopMeterRef.current();
+    resetSpeechRef.current();
+    setError(null);
+
+    let stream = liveStreamRef.current;
+    if (!stream || !stream.active || stream.getTracks().every((t) => t.readyState !== "live")) {
+      try {
+        if (sessionModeRef.current === "audio-only") {
+          stream = await requestCameraAndMic({ video: false });
+        } else if (sessionModeRef.current === "video") {
+          stream = await requestCameraAndMic();
+        }
+      } catch (e) {
+        console.warn("Could not acquire fresh stream on startRecording:", e);
+        stream = null;
+      }
+    }
+
+    if (stream) {
+      liveStreamRef.current = stream;
+    }
+
+    const hasActiveStream = !!(
+      stream &&
+      stream.active &&
+      stream.getTracks().some((t) => t.readyState === "live")
+    );
+
+    let startedHardwareRecorder = false;
+    if (hasActiveStream && sessionModeRef.current !== "simulated") {
+      try {
+        const audioTracks = stream!.getAudioTracks();
+        if (audioTracks.length > 0 && audioTracks.some((t) => t.readyState === "live")) {
+          recorderRef.current.start(stream!);
+          startedHardwareRecorder = true;
+        } else {
+          console.warn("Stream has no active audio tracks for MediaRecorder.");
+        }
+      } catch (recErr) {
+        console.warn("MediaRecorder start failed, falling back to simulated recorder:", recErr);
+      }
+    }
+
+    setPhase("recording");
+    startSpeechRef.current();
+
+    if (!startedHardwareRecorder) {
+      setIsSimulatedRecording(true);
+      setSimulatedElapsedMs(0);
+      if (simulatedTimerRef.current) clearInterval(simulatedTimerRef.current);
+
+      const startTime = performance.now();
+      simulatedTimerRef.current = setInterval(() => {
+        const elapsed = performance.now() - startTime;
+        if (elapsed >= MAX_REC_MS) {
+          if (simulatedTimerRef.current) {
+            clearInterval(simulatedTimerRef.current);
+            simulatedTimerRef.current = null;
+          }
+          void handleStopRecordingRef.current();
+        } else {
+          setSimulatedElapsedMs(elapsed);
+        }
+      }, 100);
+    } else {
+      setIsSimulatedRecording(false);
+      setSimulatedElapsedMs(0);
+    }
+  }, [requestCameraAndMic]);
+
+  const executeStartRecordingRef = useRef(executeStartRecording);
+  useEffect(() => { executeStartRecordingRef.current = executeStartRecording; }, [executeStartRecording]);
+
+  // Manual trigger: bypass remaining prep or countdown and start recording immediately
+  const handleStartAnswerNow = useCallback(() => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    setRecCountdown(0);
+    void executeStartRecordingRef.current();
+  }, []);
+
+  const handleStopRecording = useCallback(async () => {
+    if (simulatedTimerRef.current) {
+      clearInterval(simulatedTimerRef.current);
+      simulatedTimerRef.current = null;
+    }
+    if (isSimulatedRecording) {
+      setIsSimulatedRecording(false);
+      const duration = simulatedElapsedMs || 1000;
+      const dummyBlob = new Blob(["simulation-audio-stream"], { type: "audio/webm" });
+      await onRecorderComplete(dummyBlob, "audio/webm", duration);
+    } else {
+      recorderRef.current.stop();
+    }
+  }, [isSimulatedRecording, simulatedElapsedMs, onRecorderComplete]);
+
+  const handleStopRecordingRef = useRef(handleStopRecording);
+  useEffect(() => { handleStopRecordingRef.current = handleStopRecording; }, [handleStopRecording]);
+
+  const handlePauseRecording = useCallback(() => {
+    if (isSimulatedRecording) {
+      if (simulatedTimerRef.current) {
+        clearInterval(simulatedTimerRef.current);
+        simulatedTimerRef.current = null;
+      }
+    } else {
+      recorderRef.current.pause();
+    }
+  }, [isSimulatedRecording]);
+
+  const handleResumeRecording = useCallback(() => {
+    if (isSimulatedRecording) {
+      if (!simulatedTimerRef.current) {
+        const resumeStart = performance.now() - simulatedElapsedMs;
+        simulatedTimerRef.current = setInterval(() => {
+          const elapsed = performance.now() - resumeStart;
+          if (elapsed >= MAX_REC_MS) {
+            if (simulatedTimerRef.current) {
+              clearInterval(simulatedTimerRef.current);
+              simulatedTimerRef.current = null;
+            }
+            void handleStopRecordingRef.current();
+          } else {
+            setSimulatedElapsedMs(elapsed);
+          }
+        }, 100);
+      }
+    } else {
+      recorderRef.current.resume();
+    }
+  }, [isSimulatedRecording, simulatedElapsedMs]);
+
+  // Active elapsed time for recording UI (hardware or simulated)
+  const activeElapsed = isSimulatedRecording ? simulatedElapsedMs : recorder.elapsedMs;
 
   // ---- preparation countdown ----------------------------------------------
   useEffect(() => {
@@ -330,23 +678,43 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
     return () => clearInterval(id);
   }, [phase, currentIndex]);
 
-  // ---- recording countdown -------------------------------------------------
+  // ---- recording countdown (deterministic interval cleanup) ---------------
   useEffect(() => {
-    if (phase !== "countdown") return;
+    if (phase !== "countdown") {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+      return;
+    }
+
     setRecCountdown(REC_COUNTDOWN_MS);
     const step = 100;
-    const id = setInterval(() => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+    }
+
+    countdownIntervalRef.current = setInterval(() => {
       setRecCountdown((r) => {
         if (r <= step) {
-          clearInterval(id);
-          startRecording();
+          if (countdownIntervalRef.current) {
+            clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+          }
+          void executeStartRecordingRef.current();
           return 0;
         }
         return r - step;
       });
     }, step);
-    return () => clearInterval(id);
-  }, [phase, startRecording]);
+
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+    };
+  }, [phase]);
 
   // ---- re-record / delete --------------------------------------------------
   const reRecord = useCallback(async () => {
@@ -368,24 +736,44 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
     setPhase("prep");
   }, [current, recordings, speech]);
 
-  // ---- skip (optional per Sonru spec) --------------------------------------
+  // ---- skip question (with complete stream & timer cleanup) ----------------
   const skipQuestion = useCallback(() => {
     const q = current;
     if (!q) return;
+
+    if (simulatedTimerRef.current) {
+      clearInterval(simulatedTimerRef.current);
+      simulatedTimerRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    try {
+      const rec = recorderRef.current;
+      if (rec && (rec.state === "recording" || rec.state === "paused")) {
+        rec.stop();
+      }
+    } catch {}
+
+    setIsSimulatedRecording(false);
+    setSimulatedElapsedMs(0);
+    stopSpeechRef.current();
+    stopMeterRef.current();
+    setError(null);
+
     setRecordings((prev) => ({
       ...prev,
       [q.id]: { skipped: true },
     }));
-    speech.stop();
-    setError(null);
-    // Move on (or finish).
+
     if (isLast) {
       void finishSession();
     } else {
       setCurrentIndex((i) => Math.min(i + 1, total - 1));
       setPhase("prep");
     }
-  }, [current, isLast, total, speech]);
+  }, [current, isLast, total, finishSession]);
 
   // ---- analyze (Part 6) ----------------------------------------------------
   const analyze = useCallback(async () => {
@@ -542,17 +930,11 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
   }, []);
 
   // ---- cleanup stream on unmount -------------------------------------------
-  // IMPORTANT: deps must be [] (unmount only). `speech` and `previewMeter` are
-  // plain object literals recreated every render (they hold state). Including
-  // them as deps caused the cleanup — and stopPreview() — to fire on every
-  // re-render, stopping the camera stream 60×/sec via the audio meter's RAF.
   useEffect(
     () => () => {
-      stopPreviewRef.current();
-      stopSpeechRef.current();
-      stopMeterRef.current();
+      cleanUpStreams();
     },
-    [] // unmount only
+    [cleanUpStreams]
   );
 
   if (!current) {
@@ -561,7 +943,7 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
         <CardContent className="py-12 text-center">
           <Icon name="AlertCircle" className="w-10 h-10 text-amber-500 mx-auto" />
           <p className="mt-3 text-sm text-muted-foreground">No questions available.</p>
-          <Button onClick={onClose} variant="outline" className="mt-4">Back</Button>
+          <Button onClick={handleExit} variant="outline" className="mt-4">Back</Button>
         </CardContent>
       </Card>
     );
@@ -576,7 +958,7 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
       <FinalReportView
         report={finalReport}
         matchScore={matchScore}
-        onClose={onClose}
+        onClose={handleExit}
       />
     );
   }
@@ -616,7 +998,7 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
                 <Icon name={isFullscreen ? "Minimize2" : "Maximize2"} className="w-4 h-4" />
                 <span className="hidden sm:inline">{isFullscreen ? "Exit" : "Fullscreen"}</span>
               </Button>
-              <Button variant="ghost" size="sm" onClick={onClose} className="gap-1.5">
+              <Button variant="ghost" size="sm" onClick={handleExit} className="gap-1.5">
                 <Icon name="X" className="w-4 h-4" /> Exit
               </Button>
             </div>
@@ -679,133 +1061,234 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
               during the recording phase — the user had no way to confirm their
               camera/mic were active before the countdown ended. */}
 
-          {/* PREP phase — camera preview + prep timer overlay + device status */}
+          {/* PREP phase — camera preview or avatar fallback + prep timer + device status */}
           {phase === "prep" && (
             <div className="space-y-3">
               <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
-                {/* key="prep" forces React to mount a fresh <video> node when
-                    entering the prep phase, so the re-bind effect always runs
-                    on a clean element (srcObject starts null). */}
-                <video key="video-prep" ref={videoRef} className="w-full h-full object-cover" playsInline muted autoPlay />
-                {/* Overlay: prep timer + "Preview" badge */}
-                <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/50 px-2 py-1 rounded-full">
-                  <Icon name="Camera" className="w-3 h-3" /> Preview
-                </div>
-                <div className="absolute top-2 right-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-brand/80 px-2 py-1 rounded-full">
-                  <Icon name="Clock" className="w-3 h-3" /> {formatRemaining(prepRemaining)}
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-center bg-black/50 backdrop-blur-sm rounded-xl px-6 py-4">
-                    <div className="text-4xl font-bold text-white tabular-nums">{formatRemaining(prepRemaining)}</div>
-                    <p className="text-xs text-white/90 mt-1">Prepare your answer</p>
-                  </div>
-                </div>
+                {sessionMode === "video" ? (
+                  <video key="video-prep" ref={videoRef} className="w-full h-full object-cover" playsInline muted autoPlay />
+                ) : (
+                  <CandidateVideoAvatar
+                    mode={sessionMode}
+                    audioLevel={previewMeter.level}
+                    overlayTimer={formatRemaining(prepRemaining)}
+                  />
+                )}
+
+                {/* Overlays for Video mode */}
+                {sessionMode === "video" && (
+                  <>
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/50 px-2 py-1 rounded-full">
+                      <Icon name="Camera" className="w-3 h-3" /> Preview
+                    </div>
+                    <div className="absolute top-2 right-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-brand/80 px-2 py-1 rounded-full">
+                      <Icon name="Clock" className="w-3 h-3" /> {formatRemaining(prepRemaining)}
+                    </div>
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="text-center bg-black/50 backdrop-blur-sm rounded-xl px-6 py-4">
+                        <div className="text-4xl font-bold text-white tabular-nums">{formatRemaining(prepRemaining)}</div>
+                        <p className="text-xs text-white/90 mt-1">Prepare your answer</p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 {/* Camera activating spinner / error overlay */}
                 {cameraActivating && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-10">
                     <div className="text-center">
                       <Icon name="Loader2" className="w-6 h-6 animate-spin text-white mx-auto" />
-                      <p className="text-xs text-white/80 mt-2">Starting camera…</p>
+                      <p className="text-xs text-white/80 mt-2">Checking camera & audio devices…</p>
                     </div>
                   </div>
                 )}
                 {cameraError && !cameraActivating && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/70">
-                    <div className="text-center max-w-xs px-4">
-                      <Icon name="Camera" className="w-8 h-8 text-red-400 mx-auto" />
-                      <p className="text-xs text-white/90 mt-2 font-medium">Camera unavailable</p>
-                      <p className="text-[10px] text-white/70 mt-1">{cameraError}</p>
-                      <Button size="sm" variant="outline" onClick={activateCamera} className="mt-3 gap-1.5 bg-white/10 border-white/30 text-white hover:bg-white/20">
-                        <Icon name="RefreshCw" className="w-3.5 h-3.5" /> Retry
-                      </Button>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/75 z-10">
+                    <div className="text-center max-w-sm px-4">
+                      <Icon name="VideoOff" className="w-8 h-8 text-amber-400 mx-auto" />
+                      <p className="text-xs text-white/95 mt-2 font-semibold">Webcam Not Accessible</p>
+                      <p className="text-[11px] text-white/75 mt-1">{cameraError}</p>
+                      <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+                        <Button size="sm" variant="outline" onClick={activateCamera} className="gap-1.5 bg-white/10 border-white/30 text-white hover:bg-white/20">
+                          <Icon name="RefreshCw" className="w-3.5 h-3.5" /> Retry
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={switchToAudioOnly} className="gap-1.5 bg-emerald-600/30 border-emerald-500/40 text-emerald-200 hover:bg-emerald-600/40">
+                          <Icon name="Mic" className="w-3.5 h-3.5" /> Audio-Only
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={switchToPracticeMode} className="gap-1.5 bg-indigo-600/30 border-indigo-500/40 text-indigo-200 hover:bg-indigo-600/40">
+                          <Icon name="Sparkles" className="w-3.5 h-3.5" /> Practice Mode
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Inline device status — lets the user verify camera + mic
-                  without leaving for the separate Device Check tab. */}
-              <div className="flex items-center gap-2 flex-wrap text-[10px]">
-                <DeviceStatusPill
-                  ok={deviceSnapshot.cameraPermission === "granted" && !!deviceSnapshot.previewActive}
-                  label="Camera"
-                  icon="Camera"
-                  detail={deviceSnapshot.previewCapabilities ? `${deviceSnapshot.previewCapabilities.width}×${deviceSnapshot.previewCapabilities.height}` : undefined}
-                />
-                <DeviceStatusPill
-                  ok={deviceSnapshot.micPermission === "granted"}
-                  label="Mic"
-                  icon="Mic"
-                />
-                <DeviceStatusPill
-                  ok={previewMeter.active}
-                  label="Audio"
-                  icon="Activity"
-                  detail={previewMeter.active ? "live" : "silent"}
-                />
+              {/* Inline device status — lets the user verify camera + mic */}
+              <div className="flex items-center justify-between gap-2 flex-wrap text-[10px]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <DeviceStatusPill
+                    ok={sessionMode === "video" && deviceSnapshot.cameraPermission === "granted" && !!deviceSnapshot.previewActive}
+                    label="Camera"
+                    icon="Camera"
+                    detail={sessionMode === "video" ? (deviceSnapshot.previewCapabilities ? `${deviceSnapshot.previewCapabilities.width}×${deviceSnapshot.previewCapabilities.height}` : undefined) : "bypassed"}
+                  />
+                  <DeviceStatusPill
+                    ok={sessionMode !== "simulated" && deviceSnapshot.micPermission === "granted"}
+                    label="Mic"
+                    icon="Mic"
+                    detail={sessionMode === "simulated" ? "simulated" : undefined}
+                  />
+                  <DeviceStatusPill
+                    ok={previewMeter.active || sessionMode === "simulated"}
+                    label="Audio"
+                    icon="Activity"
+                    detail={sessionMode === "simulated" ? "practice" : (previewMeter.active ? "live" : "silent")}
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground font-medium">Mode:</span>
+                  <Badge variant="outline" className={cn(
+                    "text-[10px] font-semibold",
+                    sessionMode === "video" ? "bg-sky-500/10 text-sky-600 border-sky-500/30" :
+                    sessionMode === "audio-only" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" :
+                    "bg-indigo-500/10 text-indigo-600 border-indigo-500/30"
+                  )}>
+                    {sessionMode === "video" ? "Video + Audio" : sessionMode === "audio-only" ? "Audio-Only" : "Practice Mode"}
+                  </Badge>
+                </div>
               </div>
 
-              {/* Preview audio meter — shows mic input level during prep so the
-                  user can verify their microphone is picking up sound. */}
-              <AudioMeterBar level={previewMeter.level} />
+              {/* Preview audio meter */}
+              {sessionMode !== "simulated" && (
+                <AudioMeterBar level={previewMeter.level} />
+              )}
 
               {/* Prep controls */}
-              <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
                 <p className="text-xs text-muted-foreground">Recording starts automatically when the timer ends.</p>
-                <div className="flex gap-2">
-                  {!cameraError && !cameraActivating && (
+                <div className="flex items-center gap-2">
+                  {sessionMode === "video" && !cameraError && !cameraActivating && (
                     <Button size="sm" variant="ghost" onClick={activateCamera} className="gap-1.5 text-muted-foreground" title="Re-initialise camera & microphone">
                       <Icon name="RefreshCw" className="w-3.5 h-3.5" /> Retry camera
                     </Button>
                   )}
+                  {sessionMode !== "video" && (
+                    <Button size="sm" variant="ghost" onClick={activateCamera} className="gap-1.5 text-muted-foreground">
+                      <Icon name="Camera" className="w-3.5 h-3.5" /> Try Webcam
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" onClick={() => setPhase("countdown")} className="gap-1.5">
-                    <Icon name="SkipForward" className="w-4 h-4" /> Skip prep
+                    <Icon name="FastForward" className="w-4 h-4" /> Skip prep
+                  </Button>
+                  <Button size="sm" onClick={handleStartAnswerNow} className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium gap-1.5 shadow-sm">
+                    <Icon name="Play" className="w-4 h-4 fill-current" /> Start Answer Now
                   </Button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* COUNTDOWN phase — camera preview with big countdown number overlay */}
+          {/* COUNTDOWN phase — camera preview or avatar with big countdown overlay & instant start control */}
           {phase === "countdown" && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
-                <video key="video-countdown" ref={videoRef} className="w-full h-full object-cover" playsInline muted autoPlay />
-                <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/50 px-2 py-1 rounded-full">
-                  <Icon name="Video" className="w-3 h-3" /> Get ready
+                {sessionMode === "video" ? (
+                  <>
+                    <video key="video-countdown" ref={videoRef} className="w-full h-full object-cover" playsInline muted autoPlay />
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/50 px-2 py-1 rounded-full">
+                      <Icon name="Video" className="w-3 h-3" /> Get ready
+                    </div>
+                    {/* Big countdown number centered on the video feed */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="text-7xl sm:text-8xl font-bold text-white tabular-nums drop-shadow-2xl animate-pulse">
+                        {Math.ceil(recCountdown / 1000)}
+                      </div>
+                    </div>
+                    <div className="absolute bottom-2 left-2 right-2 text-center">
+                      <p className="text-xs text-white/90 bg-black/40 inline-block px-2.5 py-1 rounded-full">Recording starts automatically</p>
+                    </div>
+                  </>
+                ) : (
+                  <CandidateVideoAvatar
+                    mode={sessionMode}
+                    audioLevel={previewMeter.level}
+                    overlayCountdown={Math.ceil(recCountdown / 1000)}
+                  />
+                )}
+              </div>
+
+              {/* Countdown manual controls to avoid being trapped or stuck */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-secondary/30 rounded-xl p-3 border">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Get ready to deliver your response</p>
+                  <p className="text-[11px] text-muted-foreground">You can begin speaking immediately or skip ahead.</p>
                 </div>
-                {/* Big countdown number centered on the video feed */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-7xl sm:text-8xl font-bold text-white tabular-nums drop-shadow-2xl">
-                    {Math.ceil(recCountdown / 1000)}
-                  </div>
-                </div>
-                <div className="absolute bottom-2 left-2 right-2 text-center">
-                  <p className="text-xs text-white/90 bg-black/40 inline-block px-2 py-1 rounded-full">Recording starts automatically</p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={skipQuestion}
+                    className="gap-1.5 text-xs"
+                  >
+                    <Icon name="SkipForward" className="w-3.5 h-3.5" /> Skip
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleStartAnswerNow}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium gap-1.5 shadow-sm"
+                  >
+                    <Icon name="Play" className="w-4 h-4 fill-current" /> Start Answer Now
+                  </Button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground text-center">Look at the camera and get ready to speak.</p>
             </div>
           )}
 
-          {/* RECORDING phase — same video frame, with REC badge + controls */}
+          {/* RECORDING phase — video frame or avatar fallback, with REC badge + simulated fallback controls */}
           {phase === "recording" && (
             <div className="space-y-3">
               <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
-                <video key="video-recording" ref={videoRef} className="w-full h-full object-cover" playsInline muted autoPlay />
-                <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/50 px-2 py-1 rounded-full">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> REC {formatDuration(recorder.elapsedMs)}
-                </div>
-                {recorder.maxDurationMs && (
-                  <div className="absolute bottom-2 left-2 right-2">
-                    <div className="h-1 bg-white/30 rounded-full overflow-hidden">
-                      <div className="h-full bg-red-500" style={{ width: `${Math.min(100, (recorder.elapsedMs / recorder.maxDurationMs) * 100)}%` }} />
+                {sessionMode === "video" ? (
+                  <>
+                    <video key="video-recording" ref={videoRef} className="w-full h-full object-cover" playsInline muted autoPlay />
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium text-white bg-black/50 px-2 py-1 rounded-full">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" /> REC {formatDuration(activeElapsed)}
                     </div>
-                  </div>
+                    {MAX_REC_MS && (
+                      <div className="absolute bottom-2 left-2 right-2">
+                        <div className="h-1 bg-white/30 rounded-full overflow-hidden">
+                          <div className="h-full bg-red-500" style={{ width: `${Math.min(100, (activeElapsed / MAX_REC_MS) * 100)}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <CandidateVideoAvatar
+                    mode={sessionMode}
+                    audioLevel={previewMeter.level || recorder.level}
+                    overlayTimer={formatDuration(activeElapsed)}
+                    isRecording={true}
+                    badgeText={isSimulatedRecording ? "REC (PRACTICE)" : "REC"}
+                    badgeIcon="Radio"
+                  />
                 )}
               </div>
+
+              {/* Progress timer bar */}
+              <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-red-500 transition-all duration-100"
+                  style={{ width: `${Math.min(100, (activeElapsed / MAX_REC_MS) * 100)}%` }}
+                />
+              </div>
+
               {/* audio meter */}
-              <AudioMeterBar level={recorder.level} />
+              {sessionMode !== "simulated" && (
+                <AudioMeterBar level={recorder.level || previewMeter.level} />
+              )}
+
               {/* live transcript (if supported) */}
               {speech.supported && (
                 <div className="rounded-lg bg-secondary/40 p-2.5 max-h-24 overflow-y-auto">
@@ -820,18 +1303,32 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
               )}
               {!speech.supported && (
                 <p className="text-[10px] text-muted-foreground italic">
-                  Live speech-to-text is not supported in this browser. The AI will evaluate video/audio signals only.
+                  Live speech-to-text is not supported in this browser. You can still rehearse and analyze your answer.
                 </p>
               )}
+
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-xs text-muted-foreground">Max {formatDuration(recorder.maxDurationMs ?? 0)}</div>
-                <div className="flex gap-2">
-                  {recorder.state === "recording" ? (
-                    <Button size="sm" variant="outline" onClick={recorder.pause} className="gap-1.5"><Icon name="Pause" className="w-4 h-4" /> Pause</Button>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={recorder.resume} className="gap-1.5"><Icon name="Play" className="w-4 h-4" /> Resume</Button>
+                <div className="text-xs text-muted-foreground flex items-center gap-2">
+                  <span>Elapsed: {formatDuration(activeElapsed)} / {formatDuration(MAX_REC_MS)}</span>
+                  {isSimulatedRecording && (
+                    <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/30">
+                      Simulated Practice Timer
+                    </Badge>
                   )}
-                  <Button size="sm" onClick={recorder.stop} className="bg-red-600 hover:bg-red-700 text-white gap-1.5"><Icon name="Square" className="w-4 h-4" /> Stop</Button>
+                </div>
+                <div className="flex gap-2">
+                  {(recorder.state === "recording" || isSimulatedRecording) ? (
+                    <Button size="sm" variant="outline" onClick={handlePauseRecording} className="gap-1.5">
+                      <Icon name="Pause" className="w-4 h-4" /> Pause
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={handleResumeRecording} className="gap-1.5">
+                      <Icon name="Play" className="w-4 h-4" /> Resume
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={handleStopRecording} className="bg-red-600 hover:bg-red-700 text-white gap-1.5">
+                    <Icon name="Square" className="w-4 h-4" /> Stop & Review
+                  </Button>
                 </div>
               </div>
             </div>
@@ -840,7 +1337,25 @@ export function VideoInterviewSession({ pkg, resume, jd, generated, onClose, onC
           {/* Phase: REVIEW */}
           {phase === "review" && currentRec?.objectUrl && (
             <div className="space-y-3">
-              <video src={currentRec.objectUrl} className="w-full rounded-xl bg-black aspect-video" controls playsInline />
+              <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
+                {sessionMode === "video" ? (
+                  <video src={currentRec.objectUrl} className="w-full h-full object-cover" controls playsInline />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-900">
+                    <CandidateVideoAvatar
+                      mode={sessionMode}
+                      label="Recorded Practice Response"
+                      subLabel="Your audio answer has been stored for AI evaluation."
+                      badgeText="Playback Ready"
+                      badgeIcon="Volume2"
+                    />
+                    <div className="w-full max-w-md mt-3">
+                      <audio src={currentRec.objectUrl} controls className="w-full" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {currentRec.transcript && (
                 <div className="rounded-lg bg-secondary/40 p-2.5">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1">

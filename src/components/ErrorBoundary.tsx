@@ -1,5 +1,5 @@
 import React, { Component, type ErrorInfo, type ReactNode } from "react";
-import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp, Home } from "lucide-react";
+import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
   private handleResetAndReload = () => {
     try {
       if (typeof window !== "undefined") {
-        // Clear volatile and corrupted session caches while preserving core persistent IDs
+        // Clear volatile and potentially corrupted session state while keeping critical lists
         const preserveKeys = ["resumeai_users_list"];
         const preserved: Record<string, string | null> = {};
         preserveKeys.forEach((k) => {
@@ -41,12 +41,9 @@ export class ErrorBoundary extends Component<Props, State> {
         });
 
         sessionStorage.clear();
-        // Clear specific corruptible keys
         localStorage.removeItem("resumeai_active_resume");
         localStorage.removeItem("resumeai_current_draft");
-        localStorage.removeItem("resumeai_session_user");
 
-        // Restore safe critical seeds
         preserveKeys.forEach((k) => {
           if (preserved[k]) localStorage.setItem(k, preserved[k]!);
         });
@@ -85,7 +82,7 @@ export class ErrorBoundary extends Component<Props, State> {
               <div className="space-y-1">
                 <h1 className="text-xl font-bold tracking-tight">Something went wrong</h1>
                 <p className="text-sm text-muted-foreground leading-relaxed">
-                  The application encountered an unexpected display issue. Your saved data is intact and guarded.
+                  The application caught an unexpected error during rendering. Your saved data is protected.
                 </p>
               </div>
             </div>
@@ -100,7 +97,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 onClick={this.handleSoftRecover}
                 className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground font-medium text-sm hover:opacity-90 transition-opacity"
               >
-                <Home className="w-4 h-4" />
+                <RotateCcw className="w-4 h-4" />
                 Try Recovering View
               </button>
               <button

@@ -189,3 +189,29 @@ export async function callAiApi(
 
   return { ok: false, error: lastErrorMessage, attempts };
 }
+
+/**
+ * Dedicated Gemini API Client with automatic exponential backoff,
+ * jitter, and timeout recovery.
+ */
+export async function callGeminiWithBackoff(
+  prompt: string,
+  options: { systemPrompt?: string; model?: string; maxTokens?: number; temperature?: number } & RequestOptions = {}
+): Promise<ApiResponse> {
+  const { systemPrompt, model = "gemini-3.8-flash", maxTokens, temperature, ...requestOpts } = options;
+  const messages: ChatMessage[] = [];
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt });
+  }
+  messages.push({ role: "user", content: prompt });
+
+  const payload = {
+    model,
+    provider: "gemini",
+    messages,
+    max_tokens: maxTokens,
+    temperature,
+  };
+
+  return callAiApi("/api/providers/chat", payload, requestOpts);
+}

@@ -15,10 +15,30 @@ export function Sidebar() {
   const toggle = useApp((s) => s.toggleSidebar);
 
   const role = user?.role ?? "user";
+  const hideDevAgent = useApp((s) => s.aiDevSettings?.hideDevAgentFromNonAdmin ?? true);
+  const isAdmin = role === "admin" || role === "super_admin";
+
   const groups: { label: string; items: typeof NAV_USER }[] = [];
-  groups.push({ label: "Workspace", items: NAV_USER });
-  if (role === "admin" || role === "super_admin") groups.push({ label: "Admin", items: NAV_ADMIN });
-  if (role === "super_admin") groups.push({ label: "Super Admin", items: NAV_SUPER });
+  const workspaceItems = hideDevAgent && !isAdmin
+    ? NAV_USER.filter((item) => item.key !== "ai-dev-agent" && item.key !== "ai-workspace")
+    : NAV_USER;
+  groups.push({ label: "Workspace", items: workspaceItems });
+
+  if (isAdmin) {
+    const adminItems = [...NAV_ADMIN];
+    // If admin and dev agent is accessible, offer Developer Agent in Admin navigation
+    if (!adminItems.some((i) => i.key === "ai-dev-agent") && role === "admin") {
+      adminItems.push({ key: "ai-dev-agent", label: "AI Development Agent", icon: "Bot", group: "Admin" });
+    }
+    groups.push({ label: "Admin", items: adminItems });
+  }
+
+  if (role === "super_admin") {
+    const superItems = hideDevAgent && !isAdmin
+      ? NAV_SUPER.filter((item) => item.key !== "ai-dev-agent" && item.key !== "ai-workspace")
+      : NAV_SUPER;
+    groups.push({ label: "Super Admin", items: superItems });
+  }
 
   return (
     <aside

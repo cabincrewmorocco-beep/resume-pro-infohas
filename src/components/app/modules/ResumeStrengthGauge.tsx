@@ -101,24 +101,24 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
   };
 
   return (
-    <Card id="resume-strength-card" className={`overflow-hidden border-border/80 shadow-sm ${className}`}>
-      <CardHeader className="pb-3 border-b border-border/40 bg-muted/20">
+    <Card id="resume-strength-card" className={`overflow-hidden border-border/80 shadow-sm w-full max-w-full ${className}`}>
+      <CardHeader className="p-4 sm:p-6 pb-3 border-b border-border/40 bg-muted/20">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-brand/10 text-brand flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg bg-brand/10 text-brand flex items-center justify-center shrink-0">
                 <Icon name="Activity" className="w-4 h-4" />
               </div>
-              <div>
-                <CardTitle className="text-base sm:text-lg font-bold flex items-center gap-2">
-                  Resume Strength Score
-                  <span className="relative flex h-2 w-2">
+              <div className="min-w-0">
+                <CardTitle className="text-base sm:text-lg font-bold flex items-center gap-2 truncate">
+                  <span>Resume Strength Score</span>
+                  <span className="relative flex h-2 w-2 shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                   </span>
                 </CardTitle>
-                <CardDescription className="text-xs">
-                  Real-time keyword & ATS match analysis against target job requirements
+                <CardDescription className="text-xs truncate">
+                  Real-time keyword & ATS match analysis
                 </CardDescription>
               </div>
             </div>
@@ -128,7 +128,7 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
           <div className="flex items-center gap-2 flex-wrap">
             {/* Resume Selector */}
             {resumes.length > 1 && (
-              <div className="flex items-center gap-1.5 bg-background border border-input rounded-lg px-2.5 py-1 text-xs shadow-2xs">
+              <div className="flex items-center gap-1.5 bg-background border border-input rounded-lg px-2.5 py-1 text-xs shadow-2xs max-w-full">
                 <Icon name="FileText" className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <select
                   id="resume-strength-resume-select"
@@ -137,7 +137,7 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
                     setSelectedResumeId(e.target.value);
                     setActiveResume(e.target.value);
                   }}
-                  className="bg-transparent text-xs font-medium focus:outline-none cursor-pointer max-w-[140px] truncate"
+                  className="bg-transparent text-xs font-medium focus:outline-none cursor-pointer max-w-[120px] sm:max-w-[140px] truncate"
                   title="Select resume to evaluate"
                 >
                   {resumes.map((r) => (
@@ -150,13 +150,13 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
             )}
 
             {/* Target Job Selector */}
-            <div className="flex items-center gap-1.5 bg-background border border-input rounded-lg px-2.5 py-1 text-xs shadow-2xs">
+            <div className="flex items-center gap-1.5 bg-background border border-input rounded-lg px-2.5 py-1 text-xs shadow-2xs max-w-full">
               <Icon name="Target" className="w-3.5 h-3.5 text-brand shrink-0" />
               <select
                 id="resume-strength-target-select"
                 value={selectedTarget}
                 onChange={(e) => setSelectedTarget(e.target.value)}
-                className="bg-transparent text-xs font-medium focus:outline-none cursor-pointer max-w-[170px] truncate"
+                className="bg-transparent text-xs font-medium focus:outline-none cursor-pointer max-w-[140px] sm:max-w-[170px] truncate"
                 title="Select target job description or role"
               >
                 {jobDescriptions.length > 0 && (
@@ -182,7 +182,7 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
         </div>
       </CardHeader>
 
-      <CardContent className="pt-6 pb-6">
+      <CardContent className="p-4 sm:p-6 pt-4 sm:pt-6">
         {resumes.length === 0 ? (
           <div className="text-center py-8">
             <div className="w-12 h-12 rounded-full bg-brand/10 text-brand flex items-center justify-center mx-auto mb-3">
@@ -201,9 +201,9 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center w-full max-w-full">
             {/* Left Col: Circular Progress Gauge */}
-            <div className="lg:col-span-5 flex flex-col items-center justify-center p-2">
+            <div className="lg:col-span-5 flex flex-col items-center justify-center p-2 w-full">
               <div className="relative inline-flex items-center justify-center">
                 {/* SVG Gauge */}
                 <svg
@@ -263,7 +263,7 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
               </div>
 
               {/* Status Badge */}
-              <div className="mt-4 flex flex-col items-center gap-1 text-center">
+              <div className="mt-4 flex flex-col items-center gap-1 text-center max-w-full">
                 <span
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold"
                   style={{
@@ -274,20 +274,20 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
                 >
                   <Icon
                     name={metrics.score >= 80 ? "CheckCircle2" : metrics.score >= 65 ? "Check" : "AlertCircle"}
-                    className="w-3.5 h-3.5"
+                    className="w-3.5 h-3.5 shrink-0"
                   />
                   {metrics.levelLabel}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-[11px] text-muted-foreground truncate max-w-[260px]">
                   vs. <strong className="text-foreground">{metrics.comparedRoleTitle}</strong>
                 </span>
               </div>
             </div>
 
             {/* Right Col: Detailed Breakdown & Real-Time Keyword Matches */}
-            <div className="lg:col-span-7 space-y-4">
-              {/* Category Breakdown Progress Bars */}
-              <div className="grid grid-cols-2 gap-2.5">
+            <div className="lg:col-span-7 space-y-4 w-full min-w-0">
+              {/* Category Breakdown Progress Bars — fluid 1-col on mobile, 2-col on tablet/desktop */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-2.5 w-full">
                 <div className="p-2.5 rounded-lg border border-border/60 bg-card/60">
                   <div className="flex justify-between items-center text-xs mb-1">
                     <span className="text-muted-foreground font-medium">Keyword Coverage</span>
@@ -346,8 +346,8 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
 
               {/* Keyword Cloud Header / Tabs */}
               <div className="pt-1">
-                <div className="flex items-center justify-between pb-2 border-b border-border/50">
-                  <div className="flex items-center gap-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-border/50">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <button
                       id="strength-tab-missing"
                       onClick={() => setKeywordTab("missing")}
@@ -424,15 +424,15 @@ export function ResumeStrengthGauge({ className = "", onNavigate }: ResumeStreng
               </div>
 
               {/* Action Toolbar */}
-              <div className="pt-2 border-t border-border/40 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground flex items-center gap-1">
+              <div className="pt-2 border-t border-border/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground flex items-center gap-1 min-w-0">
                   <Icon name="Sparkles" className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                   <span className="truncate max-w-[280px]">
                     {metrics.suggestions[0] || "Keywords matched against target job description."}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <Button
                     id="strength-optimize-btn"
                     size="sm"

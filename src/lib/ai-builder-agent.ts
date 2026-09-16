@@ -105,20 +105,16 @@ export const PROJECT_TREE: AIFile[] = [
   { path: "src/lib/store.ts", type: "file", language: "ts", size: 40000 },
   { path: "src/lib/types.ts", type: "file", language: "ts", size: 20000 },
   { path: "src/lib/mock-data.ts", type: "file", language: "ts", size: 25000 },
-  { path: "migrations", type: "directory" },
-  { path: "migrations/0001_init.sql", type: "file", language: "sql", size: 8000 },
-  { path: "migrations/0002_ai_providers_enhanced.sql", type: "file", language: "sql", size: 5000 },
-  { path: "migrations/0003_ai_dev_agent.sql", type: "file", language: "sql", size: 3000 },
-  { path: "workers", type: "directory" },
-  { path: "workers/api", type: "directory" },
-  { path: "workers/api/index.ts", type: "file", language: "ts", size: 20000 },
+  { path: "src/lib/firebase.ts", type: "file", language: "ts", size: 5000 },
+  { path: "server.ts", type: "file", language: "ts", size: 6000 },
+  { path: "vite.config.ts", type: "file", language: "ts", size: 2000 },
+  { path: "firestore.rules", type: "file", language: "txt", size: 2000 },
+  { path: "public/manifest.json", type: "file", language: "json", size: 1000 },
+  { path: "public/sw.js", type: "file", language: "js", size: 3000 },
   { path: "package.json", type: "file", language: "json", size: 2000 },
   { path: "tsconfig.json", type: "file", language: "json", size: 800 },
-  { path: "next.config.ts", type: "file", language: "ts", size: 600 },
-  { path: "wrangler.toml", type: "file", language: "toml", size: 1000 },
   { path: "tailwind.config.ts", type: "file", language: "ts", size: 1200 },
   { path: "eslint.config.mjs", type: "file", language: "js", size: 1500 },
-  { path: ".github/workflows/ci-cd.yml", type: "file", language: "yaml", size: 5000 },
   { path: "README.md", type: "file", language: "md", size: 4000 },
 ];
 
@@ -345,22 +341,21 @@ async function analyzeAndPlan(request: string, type: AITask["type"], projectStru
 Task type: ${type}
 Request: "${request}"
 
-The application is a Next.js 16 + Cloudflare Pages + D1 + Workers app.
-Tech stack: React 19, TypeScript, Tailwind CSS 4, shadcn/ui, Zustand, Hono.
+The application is a Vite 6 + React 19 SPA hosted on Google Cloud Run with an Express API backend (server.ts) and Google Firebase (Firebase Auth + Cloud Firestore NoSQL).
+Tech stack: React 19, TypeScript, Tailwind CSS 4, Radix UI / shadcn, Zustand, Express.
 
 ${projectStructure}
 
 CRITICAL: Use the EXACT file path patterns from the project structure above.
-Do NOT invent paths like src/app/(main)/ or src/app/(admin)/ — this project
-does NOT use route groups. Use src/app/api/ for API routes, src/components/app/modules/
-for UI components, src/lib/ for library code, migrations/ for SQL migrations.
+Do NOT invent Next.js route groups or Cloudflare worker paths. Use server.ts for backend API routes, src/components/app/modules/
+for UI components, src/lib/ for library code and Firebase models. No SQL migrations or relational tables exist — this is NoSQL (Firestore).
 
 Analyze the request and create an execution plan. Return ONLY valid JSON:
 {
   "title": "Short task title",
   "description": "1-2 sentence description",
   "plan": "Step 1: ...\\nStep 2: ...\\nStep 3: ...",
-  "affectedFiles": ["src/components/app/modules/...", "src/lib/...", "migrations/..."]
+  "affectedFiles": ["src/components/app/modules/...", "src/lib/...", "server.ts"]
 }`;
 
   try {

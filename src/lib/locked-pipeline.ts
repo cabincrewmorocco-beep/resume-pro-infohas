@@ -423,7 +423,7 @@ export async function runLockedPipeline(
           for (let i = 0; i < arenaResults.length; i++) {
             const r = arenaResults[i];
             if (!r) continue;
-            const validation = validateOptimizerOutput(idReadyResume, r.output, jd);
+            const validation = validateOptimizerOutput(idReadyResume, r.output, jd, directiveConfig);
             const rResume = assembleResume(idReadyResume, r.output, { matchingStrategy: options?.matchingStrategy }).resume;
             const baseScore = scoreATS(rResume, jd).scores.ats;
             // Heavily penalize invalid candidate output so valid candidates win over invalid ones
@@ -502,7 +502,7 @@ export async function runLockedPipeline(
       // the attempt fails and the retry carries corrective feedback.
       // ========================================================================
       let outputValidation = await trackNode("output-validator", () =>
-        validateOptimizerOutput(idReadyResume, optimizerResult.output, jd)
+        validateOptimizerOutput(idReadyResume, optimizerResult.output, jd, directiveConfig)
       );
       lastKeywordCoverage = outputValidation.keywordCoverage;
       if (!outputValidation.valid) {
@@ -516,7 +516,7 @@ export async function runLockedPipeline(
             rawResponse: JSON.stringify(detOutput),
             warnings: ["Optimization finalized via resilient deterministic engine."],
           };
-          outputValidation = validateOptimizerOutput(idReadyResume, detOutput, jd);
+          outputValidation = validateOptimizerOutput(idReadyResume, detOutput, jd, directiveConfig);
           lastKeywordCoverage = outputValidation.keywordCoverage;
         } else {
           const actionable = outputValidation.keywordCoverage.total - outputValidation.keywordCoverage.alreadyPresent;
@@ -1203,6 +1203,6 @@ export async function runLockedPipeline(
       unmatched: 0,
     },
     nodeRuns,
-    keywordCoverage: validateOptimizerOutput(idReadyResume, detOutput, jd).keywordCoverage,
+    keywordCoverage: validateOptimizerOutput(idReadyResume, detOutput, jd, directiveConfig).keywordCoverage,
   };
 }

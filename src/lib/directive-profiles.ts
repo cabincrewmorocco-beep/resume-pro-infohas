@@ -245,3 +245,11 @@ function deepMergeAgentDirectives(base: AgentDirectives, override: Partial<Agent
     additionalInfo: { ...base.additionalInfo, ...(override.additionalInfo || {}) },
   };
 }
+
+/**
+ * Slugify a profile name into a valid directive profile id.
+ */
+export function slugifyProfileId(name: string): string {
+  const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug ? `custom-${slug}` : `custom-profile-${Date.now()}`;
+}

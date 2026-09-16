@@ -28,10 +28,6 @@ export function MyResumes() {
   const onFiles = async (files: FileList | null) => {
     if (!files || !files.length) return;
     const file = files[0];
-    if (file.size > 20 * 1024 * 1024) {
-      toast.error("File too large. Maximum 20MB.");
-      return;
-    }
     setUploading(true);
     try {
       const parsed = await parseResumeFile(file);
@@ -89,13 +85,14 @@ export function MyResumes() {
           <Button variant="outline" onClick={startBlank} className="gap-2">
             <Icon name="Plus" className="w-4 h-4" /> Blank resume
           </Button>
-          <Button onClick={() => fileRef.current?.click()} className="bg-brand hover:bg-brand-dark text-white gap-2">
-            <Icon name="Upload" className="w-4 h-4" /> Upload resume
+          <Button disabled={uploading} onClick={() => fileRef.current?.click()} className="bg-brand hover:bg-brand-dark text-white gap-2">
+            {uploading ? <Icon name="Loader2" className="w-4 h-4 animate-spin" /> : <Icon name="Upload" className="w-4 h-4" />}
+            {uploading ? "Parsing..." : "Upload resume"}
           </Button>
           <input
             ref={fileRef}
             type="file"
-            accept=".pdf,.doc,.docx,.txt"
+            accept=".pdf,.docx,.txt"
             className="hidden"
             onChange={(e) => onFiles(e.target.files)}
           />
@@ -115,8 +112,8 @@ export function MyResumes() {
             {uploading ? (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-3">
                 <Icon name="Loader2" className="w-10 h-10 text-brand animate-spin" />
-                <div className="font-medium">Parsing your resume…</div>
-                <div className="text-xs text-muted-foreground">Extracting text, contacts, experience, skills, education</div>
+                <div className="font-medium">Parsing & Sanitizing your resume…</div>
+                <div className="text-xs text-muted-foreground">Extracting text safely (5 MB max, up to 15k tokens)</div>
               </motion.div>
             ) : (
               <div className="flex flex-col items-center gap-3">
@@ -124,7 +121,7 @@ export function MyResumes() {
                   <Icon name="Upload" className="w-6 h-6" />
                 </div>
                 <div className="font-semibold">Drop your resume here, or click to browse</div>
-                <div className="text-xs text-muted-foreground">Supports PDF, DOC, DOCX, TXT — up to 20 MB</div>
+                <div className="text-xs text-muted-foreground">Supports PDF, DOCX, TXT — up to 5 MB</div>
                 <div className="flex flex-wrap justify-center gap-2 mt-2">
                   <Badge variant="brand"><Icon name="ShieldCheck" className="w-3 h-3 mr-1" /> In-Browser Privacy</Badge>
                   <Badge variant="gold"><Icon name="Database" className="w-3 h-3 mr-1" /> Database Persisted</Badge>

@@ -116,6 +116,7 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
         localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
       }
       set({ user, isAuthed: true, authOpen: false });
+      (get() as any).loadCustomDirectiveProfiles?.();
     },
 
     signInWithEmail: async (email: string, pass: string) => {
@@ -465,20 +466,23 @@ export const createAuthSlice: StateCreator<AppState, [], [], AuthSlice> = (set, 
         onFirebaseAuthStateChanged((fbUser) => {
           if (fbUser) {
             const current = get().user;
-            if (!current || current.id !== fbUser.uid) {
+            const isGoogle = fbUser.providerData?.some((p) => p.providerId === "google.com") || current?.provider === "google";
+            if (!current || current.id !== fbUser.uid || (!current.provider && isGoogle)) {
               const u: User = {
                 id: fbUser.uid,
                 email: fbUser.email || current?.email || "candidate@resumepro.cloud",
                 name: fbUser.displayName || current?.name || "Candidate",
                 role: current?.role || "user",
                 status: "approved",
-                provider: fbUser.isAnonymous ? "anonymous" : "firebase_auth",
+                provider: fbUser.isAnonymous ? "anonymous" : isGoogle ? "google" : "firebase_auth",
                 createdAt: current?.createdAt || new Date().toISOString(),
               };
               set({ user: u, isAuthed: true });
               if (typeof localStorage !== "undefined") {
                 localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(u));
               }
+              (get() as any).loadCustomDirectiveProfiles?.();
+              syncLocalDataToFirestore(u.id).catch(() => {});
             }
           }
         });

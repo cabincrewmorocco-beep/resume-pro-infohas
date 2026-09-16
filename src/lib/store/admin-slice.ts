@@ -13,7 +13,9 @@ import type {
 } from "../types";
 import type { InterviewPersona } from "../interview/personas";
 import type { DirectiveProfile } from "../directive-profiles";
-import { registerCustomProfiles } from "../directive-profiles";
+import { registerCustomProfiles, BUILT_IN_PROFILES, applyProfileToConfig, isBuiltInProfile } from "../directive-profiles";
+import { saveFirestoreDirectiveProfile, deleteFirestoreDirectiveProfile, getFirestoreDirectiveProfiles } from "../firebase";
+import { directiveSyncService } from "../directive-sync-service";
 import type { StructuralBlueprint } from "../structural-blueprints";
 import { registerCustomBlueprints } from "../structural-blueprints";
 import type {
@@ -169,8 +171,16 @@ export interface AdminSlice {
   saveScenarios: (list: InterviewScenario[]) => void;
   /** Replace the whole persona list and persist it to D1 (survives refresh). */
   saveInterviewPersonas: (list: InterviewPersona[]) => void;
-  /** Replace the whole custom directive profile list, persist to D1 + hydrate the profile registry. */
+  /** Replace the whole custom directive profile list, persist to Firestore + localStorage + D1 and hydrate the profile registry. */
   saveCustomDirectiveProfiles: (list: DirectiveProfile[]) => void;
+  /** Add a single custom directive profile and persist to Firestore + localStorage. */
+  addCustomDirectiveProfile: (profile: DirectiveProfile) => Promise<void>;
+  /** Update an existing custom directive profile and sync across layers. */
+  updateCustomDirectiveProfile: (id: string, patch: Partial<DirectiveProfile>) => Promise<void>;
+  /** Delete a custom directive profile from state, localStorage, and Firestore, reverting to default if active. */
+  deleteCustomDirectiveProfile: (id: string) => void | Promise<void>;
+  /** Sync custom directive profiles between Firestore and localStorage. */
+  loadCustomDirectiveProfiles: () => Promise<void>;
   /** Replace the whole custom structural blueprint list, persist to D1 + hydrate the blueprint registry. */
   saveCustomStructuralBlueprints: (list: StructuralBlueprint[]) => void;
   addPrompt: (p: PromptTemplate) => void;
@@ -297,7 +307,21 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
   })(),
   scenarios: SEED_SCENARIOS,
   interviewPersonas: INTERVIEW_PERSONAS.map((p) => ({ ...p })),
-  customDirectiveProfiles: [],
+  customDirectiveProfiles: (() => {
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("custom_directives_v1");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            registerCustomProfiles(parsed);
+            return parsed;
+          }
+        }
+      }
+    } catch {}
+    return [];
+  })(),
   customStructuralBlueprints: [],
 
   addProvider: (p) => {
@@ -532,8 +556,71 @@ export const createAdminSlice: StateCreator<AppState, [], [], AdminSlice> = (set
   saveCustomDirectiveProfiles: (list) => {
     set({ customDirectiveProfiles: list });
     registerCustomProfiles(list);
+    directiveSyncService.saveLocalProfiles(list);
+    const userId = get().user?.id;
+    if (userId) {
+      for (const p of list) {
+        saveFirestoreDirectiveProfile(userId, p).catch((e) => {
+          console.warn("[store] Firestore directive profile save warning:", e);
+        });
+      }
+    }
     cloudApiSafe(cloudApi.updateBranding as any)({ customDirectiveProfiles: list }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
-    get().log({ actor: get().user?.email ?? "admin", action: "Custom directive profiles saved", category: "admin", details: `${list.length} profile(s) persisted to D1`, severity: "info" });
+    get().log({ actor: get().user?.email ?? "admin", action: "Custom directive profiles saved", category: "admin", details: `${list.length} profile(s) persisted to Firestore & local storage`, severity: "info" });
+  },
+
+  addCustomDirectiveProfile: async (profile: DirectiveProfile) => {
+    const userId = get().user?.id;
+    const updated = await directiveSyncService.addOrUpdateProfile(profile, userId);
+    cloudApiSafe(cloudApi.updateBranding as any)({ customDirectiveProfiles: updated }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
+    get().log({ actor: get().user?.email ?? "admin", action: "Custom directive profile added", category: "admin", details: `Added profile ${profile.name} (${profile.id})`, severity: "info" });
+  },
+
+  updateCustomDirectiveProfile: async (id: string, patch: Partial<DirectiveProfile>) => {
+    const existing = get().customDirectiveProfiles.find((p) => p.id === id);
+    if (!existing) return;
+    const updatedProfile: DirectiveProfile = {
+      ...existing,
+      ...patch,
+      overrides: {
+        ...(existing.overrides || {}),
+        ...(patch.overrides || {}),
+      },
+    };
+    const userId = get().user?.id;
+    const updated = await directiveSyncService.addOrUpdateProfile(updatedProfile, userId);
+    cloudApiSafe(cloudApi.updateBranding as any)({ customDirectiveProfiles: updated }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
+    get().log({ actor: get().user?.email ?? "admin", action: "Custom directive profile updated", category: "admin", details: `Updated profile ${updatedProfile.name} (${id})`, severity: "info" });
+  },
+
+  deleteCustomDirectiveProfile: async (id: string) => {
+    if (isBuiltInProfile(id)) {
+      console.warn(`[store] Guardrail: Cannot delete built-in directive profile "${id}". Built-in system profiles are protected.`);
+      return;
+    }
+    const userId = get().user?.id;
+    try {
+      const { profiles, fallbackTriggered } = await directiveSyncService.deleteProfile(id, userId);
+      cloudApiSafe(cloudApi.updateBranding as any)({ customDirectiveProfiles: profiles }).catch((e) => { console.warn("[store] Cloud sync failed:", e); });
+      get().log({
+        actor: get().user?.email ?? "admin",
+        action: "Custom directive profile deleted",
+        category: "admin",
+        details: `Deleted profile ${id}${fallbackTriggered ? " (fallback to Aviation / Hospitality triggered)" : ""}`,
+        severity: "info",
+      });
+    } catch (err) {
+      console.error("[store] Failed to delete directive profile:", err);
+    }
+  },
+
+  loadCustomDirectiveProfiles: async () => {
+    const userId = get().user?.id;
+    try {
+      await directiveSyncService.syncProfiles(userId);
+    } catch (err) {
+      console.warn("[store] Loading custom directive profiles from Firestore:", err);
+    }
   },
 
   saveCustomStructuralBlueprints: (list) => {

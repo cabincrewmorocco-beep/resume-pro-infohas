@@ -1,316 +1,280 @@
 // ============================================================================
-// Resume DB — Durable Local Persistence Engine (IndexedDB + Storage Sync)
-// ============================================================================
-// Provides database-grade local persistence:
-// 1. 100% standalone, client-side persistence directly within AI Studio.
-// 2. Survives browser refresh, cache clears, and memory limits without 5MB quota.
-// 3. Dual-layer storage: IndexedDB for unbounded full-fidelity objects,
-//    plus localStorage for instant synchronous fast-boot caching.
-// 4. Zero external backend, Cloudflare D1, or external worker dependencies.
+// ResumeAI Pro — Local IndexedDB Database Engine & Storage Helper
+// Provides durable, asynchronous client-side storage with localStorage fallback
 // ============================================================================
 
-import type { ResumeData, JobDescription, ATSReport, CoverLetter, CareerMaterial, InterviewPackage } from "@/lib/types";
-
-const DB_NAME = "ResumeEngineDB";
-const DB_VERSION = 2;
+export const DB_NAME = "ResumeEngineDB";
+export const DB_VERSION = 2;
 
 export const STORE_RESUMES = "resumes";
 export const STORE_JDS = "job_descriptions";
+export const STORE_COVER_LETTERS = "cover_letters";
 export const STORE_ATS = "ats_reports";
 export const STORE_APPLICATIONS = "applications";
-export const STORE_COVER_LETTERS = "cover_letters";
-export const STORE_SETTINGS = "settings";
 export const STORE_INTERVIEWS = "interviews";
-export const STORE_MATERIALS = "career_materials";
+export const STORE_MATERIALS = "materials";
 export const STORE_AUDIT_LOGS = "audit_logs";
+export const STORE_SETTINGS = "settings";
 
-let dbInstance: IDBDatabase | null = null;
-let dbPromise: Promise<IDBDatabase> | null = null;
+const ALL_STORES = [
+  STORE_RESUMES,
+  STORE_JDS,
+  STORE_COVER_LETTERS,
+  STORE_ATS,
+  STORE_APPLICATIONS,
+  STORE_INTERVIEWS,
+  STORE_MATERIALS,
+  STORE_AUDIT_LOGS,
+  STORE_SETTINGS,
+];
+
+let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 export function isIndexedDBAvailable(): boolean {
-  return typeof window !== "undefined" && "indexedDB" in window;
+  try {
+    return typeof window !== "undefined" && "indexedDB" in window && window.indexedDB !== null;
+  } catch {
+    return false;
+  }
 }
 
-export async function getResumeDB(): Promise<IDBDatabase> {
-  if (!isIndexedDBAvailable()) {
-    throw new Error("IndexedDB is not supported in this environment");
+export function safeGetLocalStorage<T = any>(key: string, fallback: T): T {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return fallback;
+    const item = window.localStorage.getItem(key);
+    if (!item) return fallback;
+    return JSON.parse(item) as T;
+  } catch {
+    return fallback;
   }
+}
 
-  if (dbInstance) return dbInstance;
+export function safeSetLocalStorage(key: string, value: any): boolean {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    window.localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (err) {
+    console.warn(`[storage] LocalStorage write failed for key "${key}":`, err);
+    return false;
+  }
+}
+
+function openDB(): Promise<IDBDatabase | null> {
+  if (!isIndexedDBAvailable()) return Promise.resolve(null);
   if (dbPromise) return dbPromise;
 
-  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = window.indexedDB.open(DB_NAME, DB_VERSION);
+  dbPromise = new Promise((resolve) => {
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
-      const db = request.result;
-      const stores = [
-        STORE_RESUMES,
-        STORE_JDS,
-        STORE_ATS,
-        STORE_APPLICATIONS,
-        STORE_COVER_LETTERS,
-        STORE_SETTINGS,
-        STORE_INTERVIEWS,
-        STORE_MATERIALS,
-        STORE_AUDIT_LOGS,
-      ];
-
-      for (const storeName of stores) {
-        if (!db.objectStoreNames.contains(storeName)) {
-          const keyPath = storeName === STORE_SETTINGS ? "key" : "id";
-          db.createObjectStore(storeName, { keyPath });
-        }
-      }
-    };
-
-    request.onsuccess = () => {
-      dbInstance = request.result;
-      dbInstance.onversionchange = () => {
-        dbInstance?.close();
-        dbInstance = null;
-        dbPromise = null;
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        ALL_STORES.forEach((storeName) => {
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.createObjectStore(storeName, { keyPath: "id" });
+          }
+        });
       };
-      resolve(dbInstance);
-    };
 
-    request.onerror = () => {
-      console.warn("[resume-db] Failed to open IndexedDB database:", request.error);
-      reject(request.error);
-    };
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+
+      request.onerror = (err) => {
+        console.warn("[resume-db] Failed to open IndexedDB:", err);
+        resolve(null);
+      };
+
+      request.onblocked = () => {
+        console.warn("[resume-db] IndexedDB open blocked");
+      };
+    } catch (e) {
+      console.warn("[resume-db] Unexpected error opening IndexedDB:", e);
+      resolve(null);
+    }
   });
 
   return dbPromise;
 }
 
-// ============================================================================
-// Generic Store Helpers
-// ============================================================================
+export async function getAllFromStore<T = any>(storeName: string): Promise<T[]> {
+  const db = await openDB();
+  if (!db) return [];
 
-export async function getAllFromStore<T>(storeName: string): Promise<T[]> {
-  try {
-    const db = await getResumeDB();
-    return new Promise((resolve) => {
+  return new Promise((resolve) => {
+    try {
       const tx = db.transaction(storeName, "readonly");
       const store = tx.objectStore(storeName);
       const req = store.getAll();
-      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
-      req.onerror = () => {
-        console.warn(`[resume-db] Error reading ${storeName}:`, req.error);
-        resolve([]);
-      };
-    });
-  } catch (err) {
-    console.warn(`[resume-db] getAllFromStore(${storeName}) failed:`, err);
-    return [];
-  }
+
+      req.onsuccess = () => resolve((req.result as T[]) || []);
+      req.onerror = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
 }
 
-export async function putToStore<T extends Record<string, any>>(storeName: string, item: T): Promise<void> {
-  if (!item) return;
-  try {
-    const db = await getResumeDB();
-    return new Promise((resolve, reject) => {
+export async function putToStore<T extends { id: string }>(storeName: string, item: T): Promise<boolean> {
+  if (!item || !item.id) return false;
+  const db = await openDB();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    try {
       const tx = db.transaction(storeName, "readwrite");
       const store = tx.objectStore(storeName);
       const req = store.put(item);
-      req.onsuccess = () => resolve();
-      req.onerror = () => {
-        console.warn(`[resume-db] Error writing to ${storeName}:`, req.error);
-        reject(req.error);
-      };
-    });
-  } catch (err) {
-    console.warn(`[resume-db] putToStore(${storeName}) failed:`, err);
-  }
-}
 
-export async function putBatchToStore<T extends Record<string, any>>(storeName: string, items: T[]): Promise<void> {
-  if (!Array.isArray(items) || items.length === 0) return;
-  try {
-    const db = await getResumeDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      const store = tx.objectStore(storeName);
-      for (const item of items) {
-        if (item) store.put(item);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => {
-        console.warn(`[resume-db] Error batch-writing to ${storeName}:`, tx.error);
-        reject(tx.error);
-      };
-    });
-  } catch (err) {
-    console.warn(`[resume-db] putBatchToStore(${storeName}) failed:`, err);
-  }
-}
-
-export async function deleteFromStore(storeName: string, key: string): Promise<void> {
-  if (!key) return;
-  try {
-    const db = await getResumeDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      const store = tx.objectStore(storeName);
-      const req = store.delete(key);
-      req.onsuccess = () => resolve();
-      req.onerror = () => {
-        console.warn(`[resume-db] Error deleting key "${key}" from ${storeName}:`, req.error);
-        reject(req.error);
-      };
-    });
-  } catch (err) {
-    console.warn(`[resume-db] deleteFromStore(${storeName}, ${key}) failed:`, err);
-  }
-}
-
-// ============================================================================
-// Resumes
-// ============================================================================
-
-export async function getAllResumesFromDB(): Promise<ResumeData[]> {
-  return getAllFromStore<ResumeData>(STORE_RESUMES);
-}
-
-export async function saveResumeToDB(resume: ResumeData): Promise<void> {
-  if (!resume || !resume.id) return;
-  await putToStore(STORE_RESUMES, resume);
-}
-
-export async function saveAllResumesToDB(resumes: ResumeData[]): Promise<void> {
-  await putBatchToStore(STORE_RESUMES, resumes);
-}
-
-export async function deleteResumeFromDB(id: string): Promise<void> {
-  await deleteFromStore(STORE_RESUMES, id);
-}
-
-// ============================================================================
-// Job Descriptions
-// ============================================================================
-
-export async function getAllJDsFromDB(): Promise<JobDescription[]> {
-  return getAllFromStore<JobDescription>(STORE_JDS);
-}
-
-export async function saveJDToDB(jd: JobDescription): Promise<void> {
-  if (!jd || !jd.id) return;
-  await putToStore(STORE_JDS, jd);
-}
-
-export async function deleteJDFromDB(id: string): Promise<void> {
-  await deleteFromStore(STORE_JDS, id);
-}
-
-// ============================================================================
-// ATS Reports
-// ============================================================================
-
-export async function getAllATSReportsFromDB(): Promise<ATSReport[]> {
-  return getAllFromStore<ATSReport>(STORE_ATS);
-}
-
-export async function saveATSReportToDB(report: ATSReport): Promise<void> {
-  if (!report || !report.id) return;
-  await putToStore(STORE_ATS, report);
-}
-
-// ============================================================================
-// Applications (Job Tracker)
-// ============================================================================
-
-export async function getAllApplicationsFromDB<T = any>(): Promise<T[]> {
-  return getAllFromStore<T>(STORE_APPLICATIONS);
-}
-
-export async function saveApplicationToDB<T extends Record<string, any>>(app: T): Promise<void> {
-  if (!app || !app.id) return;
-  await putToStore(STORE_APPLICATIONS, app);
-}
-
-export async function saveAllApplicationsToDB<T extends Record<string, any>>(apps: T[]): Promise<void> {
-  await putBatchToStore(STORE_APPLICATIONS, apps);
-}
-
-export async function deleteApplicationFromDB(id: string): Promise<void> {
-  await deleteFromStore(STORE_APPLICATIONS, id);
-}
-
-// ============================================================================
-// Cover Letters
-// ============================================================================
-
-export async function getAllCoverLettersFromDB(): Promise<CoverLetter[]> {
-  return getAllFromStore<CoverLetter>(STORE_COVER_LETTERS);
-}
-
-export async function saveCoverLetterToDB(cl: CoverLetter): Promise<void> {
-  if (!cl || !cl.id) return;
-  await putToStore(STORE_COVER_LETTERS, cl);
-}
-
-export async function deleteCoverLetterFromDB(id: string): Promise<void> {
-  await deleteFromStore(STORE_COVER_LETTERS, id);
-}
-
-// ============================================================================
-// Settings & Key-Value Configuration
-// ============================================================================
-
-export async function getSettingFromDB<T = any>(key: string): Promise<T | null> {
-  try {
-    const db = await getResumeDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_SETTINGS, "readonly");
-      const store = tx.objectStore(STORE_SETTINGS);
-      const req = store.get(key);
-      req.onsuccess = () => resolve(req.result ? req.result.value : null);
-      req.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
-}
-
-export async function saveSettingToDB(key: string, value: any): Promise<void> {
-  await putToStore(STORE_SETTINGS, { key, value, updatedAt: new Date().toISOString() });
-}
-
-// ============================================================================
-// Safe LocalStorage Fallback (Dual-layer resilience)
-// ============================================================================
-
-export function safeSetLocalStorage<T>(key: string, data: T): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
-
-  try {
-    window.localStorage.setItem(key, JSON.stringify(data));
-  } catch (quotaErr) {
-    console.warn(`[storage] Quota exceeded for key "${key}", attempting pruned save:`, quotaErr);
-    try {
-      if (Array.isArray(data)) {
-        const pruned = data.map((item) => {
-          if (item && typeof item === "object" && "rawText" in item) {
-            const { rawText, ...rest } = item;
-            return rest;
-          }
-          return item;
-        });
-        window.localStorage.setItem(key, JSON.stringify(pruned));
-      }
-    } catch (fallbackErr) {
-      console.error(`[storage] Failed to save even pruned data to localStorage:`, fallbackErr);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
     }
-  }
+  });
 }
 
-export function safeGetLocalStorage<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined" || !window.localStorage) return fallback;
-  try {
-    const item = window.localStorage.getItem(key);
-    return item ? JSON.parse(item) : fallback;
-  } catch {
-    return fallback;
-  }
+export async function putBatchToStore<T extends { id: string }>(storeName: string, items: T[]): Promise<boolean> {
+  if (!items || items.length === 0) return true;
+  const db = await openDB();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+
+      items.forEach((item) => {
+        if (item && item.id) {
+          store.put(item);
+        }
+      });
+
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+export async function deleteFromStore(storeName: string, id: string): Promise<boolean> {
+  if (!id) return false;
+  const db = await openDB();
+  if (!db) return false;
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      const req = store.delete(id);
+
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+// ============================================================================
+// Domain Specific DB Helpers
+// ============================================================================
+
+// Resumes
+export async function getAllResumesFromDB<T = any>(): Promise<T[]> {
+  const fromIDB = await getAllFromStore<T>(STORE_RESUMES);
+  if (fromIDB && fromIDB.length > 0) return fromIDB;
+  return safeGetLocalStorage<T[]>("resumeai_resumes", []);
+}
+
+export async function saveResumeToDB<T extends { id: string }>(resume: T): Promise<boolean> {
+  if (!resume || !resume.id) return false;
+  return putToStore(STORE_RESUMES, resume);
+}
+
+export async function saveAllResumesToDB<T extends { id: string }>(resumes: T[]): Promise<boolean> {
+  return putBatchToStore(STORE_RESUMES, resumes);
+}
+
+export async function deleteResumeFromDB(id: string): Promise<boolean> {
+  return deleteFromStore(STORE_RESUMES, id);
+}
+
+// Job Descriptions
+export async function getAllJDsFromDB<T = any>(): Promise<T[]> {
+  const fromIDB = await getAllFromStore<T>(STORE_JDS);
+  if (fromIDB && fromIDB.length > 0) return fromIDB;
+  return safeGetLocalStorage<T[]>("resumeai_jds", []);
+}
+
+export async function saveJDToDB<T extends { id: string }>(jd: T): Promise<boolean> {
+  if (!jd || !jd.id) return false;
+  return putToStore(STORE_JDS, jd);
+}
+
+export async function deleteJDFromDB(id: string): Promise<boolean> {
+  return deleteFromStore(STORE_JDS, id);
+}
+
+// Cover Letters
+export async function getAllCoverLettersFromDB<T = any>(): Promise<T[]> {
+  const fromIDB = await getAllFromStore<T>(STORE_COVER_LETTERS);
+  if (fromIDB && fromIDB.length > 0) return fromIDB;
+  return safeGetLocalStorage<T[]>("resumeai_cover_letters", []);
+}
+
+export async function saveCoverLetterToDB<T extends { id: string }>(cl: T): Promise<boolean> {
+  if (!cl || !cl.id) return false;
+  return putToStore(STORE_COVER_LETTERS, cl);
+}
+
+export async function deleteCoverLetterFromDB(id: string): Promise<boolean> {
+  return deleteFromStore(STORE_COVER_LETTERS, id);
+}
+
+// ATS Reports
+export async function getAllATSReportsFromDB<T = any>(): Promise<T[]> {
+  const fromIDB = await getAllFromStore<T>(STORE_ATS);
+  if (fromIDB && fromIDB.length > 0) return fromIDB;
+  return safeGetLocalStorage<T[]>("resumeai_ats_reports", []);
+}
+
+export async function saveATSReportToDB<T extends { id: string }>(report: T): Promise<boolean> {
+  if (!report || !report.id) return false;
+  return putToStore(STORE_ATS, report);
+}
+
+// Applications
+export async function getAllApplicationsFromDB<T = any>(): Promise<T[]> {
+  const fromIDB = await getAllFromStore<T>(STORE_APPLICATIONS);
+  if (fromIDB && fromIDB.length > 0) return fromIDB;
+  return safeGetLocalStorage<T[]>("resumeai_applications", []);
+}
+
+export async function saveApplicationToDB<T extends { id: string }>(app: T): Promise<boolean> {
+  if (!app || !app.id) return false;
+  return putToStore(STORE_APPLICATIONS, app);
+}
+
+export async function saveAllApplicationsToDB<T extends { id: string }>(apps: T[]): Promise<boolean> {
+  return putBatchToStore(STORE_APPLICATIONS, apps);
+}
+
+export async function deleteApplicationFromDB(id: string): Promise<boolean> {
+  return deleteFromStore(STORE_APPLICATIONS, id);
+}
+
+// Settings
+export async function getSettingFromDB<T = any>(key: string, fallback: T = null as unknown as T): Promise<T> {
+  const all = await getAllFromStore<{ id: string; value: any }>(STORE_SETTINGS);
+  const found = all.find((s) => s.id === key);
+  if (found) return found.value as T;
+  return safeGetLocalStorage(`resumeai_setting_${key}`, fallback);
+}
+
+export async function saveSettingToDB(key: string, value: any): Promise<boolean> {
+  return putToStore(STORE_SETTINGS, { id: key, value });
 }

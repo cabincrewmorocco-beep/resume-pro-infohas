@@ -117,15 +117,19 @@ export function buildBulletDirective(
   config: OptimizerDirectiveConfig | null | undefined,
   context?: DirectiveContext,
 ): string {
-  // If custom override is set, it COMPLETELY REPLACES the generated directive
-  const customOverride = context?.customOverride?.trim();
-  if (customOverride) {
-    return customOverride;
-  }
+  const customOverride = context?.customOverride?.trim() || config?.customDirectiveOverride?.trim();
+  const effectiveConfig: OptimizerDirectiveConfig | null | undefined = config
+    ? {
+        ...config,
+        customDirectiveOverride: customOverride || config.customDirectiveOverride,
+      }
+    : customOverride
+      ? ({ ...FALLBACK_CONFIG, customDirectiveOverride: customOverride } as OptimizerDirectiveConfig)
+      : config;
 
-  const policy = buildOptimizationPolicy(config);
+  const policy = buildOptimizationPolicy(effectiveConfig);
   const policyBlock = formatPolicyForPrompt(policy);
-  const c = config || FALLBACK_CONFIG;
+  const c = effectiveConfig || FALLBACK_CONFIG;
   const minWords = c.summaryMinWords ?? 60;
   const maxWords = c.summaryMaxWords ?? 90;
 

@@ -10,6 +10,7 @@ import { isForbiddenSkill } from "./entity-lock";
 import { detectSectionBoundaries } from "./section-boundary-parser";
 import { extractSectionsFromResume } from "./dynamic-section-engine";
 import { callAI, extractJSON } from "./ai";
+import { validateUploadFile, sanitizeResumeText } from "./file-sanitizer";
 
 function safeCall<T extends (...args: any[]) => any>(fn: T, args: Parameters<T>, fallback: ReturnType<T>): ReturnType<T> {
   try { return typeof fn === 'function' ? fn(...args) : fallback; } catch { return fallback; }
@@ -396,6 +397,11 @@ export function heuristicParser(text: string, fileName: string): ResumeData {
 }
 
 export async function parseResumeFile(file: File): Promise<ResumeData> {
+  const validation = validateUploadFile(file);
+  if (!validation.valid) {
+    throw new Error(validation.error || "File validation failed.");
+  }
+
   try {
     const name = file.name.toLowerCase();
     let rawText = "";
@@ -406,16 +412,12 @@ export async function parseResumeFile(file: File): Promise<ResumeData> {
       rawText = await parsePdf(file);
     } else if (name.endsWith(".docx")) {
       rawText = await parseDocx(file);
-    } else if (name.endsWith(".doc")) {
-      rawText = await file.text().catch(() => "");
-      if (!rawText.trim()) {
-        console.warn("[parser] Legacy .doc not parseable in-browser. Returning blank resume.");
-        return blankResume(file.name.replace(/\.[^/.]+$/, ""));
-      }
     } else {
-      console.warn("[parser] Unsupported file type. Returning blank resume.");
-      return blankResume(file.name.replace(/\.[^/.]+$/, ""));
+      throw new Error("Unsupported file type. Please upload a .pdf, .docx, or .txt file (maximum 5 MB).");
     }
+
+    // Sanitize and limit raw text to 15,000 characters before AI processing
+    rawText = sanitizeResumeText(rawText, 15000);
 
     if (rawText.trim().length < 30) {
       console.warn("[parser] File appears empty or unparseable. Returning blank resume.");

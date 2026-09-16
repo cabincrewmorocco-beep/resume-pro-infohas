@@ -20,6 +20,20 @@ import type {
   PermissionLike,
 } from "./types";
 
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(errorMessage);
+      err.name = "TimeoutError";
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 function detectCompatibility(): BrowserCompatibility {
   const w: any = typeof window !== "undefined" ? window : {};
   const md = w.navigator?.mediaDevices;
@@ -172,12 +186,16 @@ export function useDeviceCheck(options: UseDeviceCheckOptions = {}) {
                 noiseSuppression: false,
                 autoGainControl: false,
               } as MediaTrackConstraints);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: wantsVideo
-            ? (constraints?.video ?? ({ width: { ideal: 1280 }, height: { ideal: 720 } } as MediaTrackConstraints))
-            : false,
-          audio: audioConstraints,
-        });
+        const stream = await withTimeout(
+          navigator.mediaDevices.getUserMedia({
+            video: wantsVideo
+              ? (constraints?.video ?? ({ width: { ideal: 1280 }, height: { ideal: 720 } } as MediaTrackConstraints))
+              : false,
+            audio: audioConstraints,
+          }),
+          5000,
+          "Camera/microphone request timed out after 5 seconds."
+        );
         streamRef.current = stream;
 
         // Mirror selection into snapshot for the selectors.
@@ -316,6 +334,11 @@ function handleGumError(
   let perm: PermissionLike = "denied";
 
   switch (name) {
+    case "TimeoutError":
+      perm = "denied";
+      recovery =
+        "Device access timed out after 5 seconds. You can continue in Audio-Only or Simulation Practice mode.";
+      break;
     case "NotAllowedError":
     case "SecurityError":
       perm = "denied";

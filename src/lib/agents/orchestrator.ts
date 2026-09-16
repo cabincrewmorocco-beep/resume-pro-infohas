@@ -2990,24 +2990,26 @@ CONTENT REQUIREMENTS:
 `;
 
   let customDirective: string | undefined;
+  let activeDirectiveConfig: any = null;
   try {
     const state: any = useApp.getState();
-    customDirective = state?.optimizerDirective?.customDirectiveOverride?.trim() || undefined;
+    activeDirectiveConfig = state?.optimizerDirective;
+    customDirective = activeDirectiveConfig?.customDirectiveOverride?.trim() || undefined;
   } catch {}
 
-  // If customDirective exists, it ALREADY includes the anti-hallucination preamble 
-  // and everything else via getOptimizerDirective() if called correctly, 
-  // but here orchestrator uses 'split.system'. 
-  // We want to ensure that if a user provided an override, it is the CORE of the system prompt.
-  let systemPromptText = customDirective 
-    ? customDirective 
-    : (antiHallucinationPreamble + split.system);
-  
-  // If it's an override, we still want to prepend the anti-hallucination preamble 
-  // unless the override already has it.
-  if (customDirective && !systemPromptText.includes("ANTI-HALLUCINATION")) {
-    systemPromptText = antiHallucinationPreamble + "\n\n" + systemPromptText;
+  // Build the authoritative OptimizationPolicy containing active blueprint parameters and custom override
+  const policy = buildOptimizationPolicy(activeDirectiveConfig);
+  if (customDirective) {
+    policy.customDirectiveOverride = customDirective;
   }
+  const formattedPolicyBanner = formatPolicyForPrompt(policy);
+
+  // Inject policy at the VERY TOP as CRITICAL SYSTEM INSTRUCTION — NON-NEGOTIABLE POLICY
+  // Ensure local or default fallback prompts do NOT overwrite or dilute user-configured directives.
+  let systemPromptText = `${formattedPolicyBanner}\n\n${antiHallucinationPreamble}\n\n${split.system}`;
+
+  const blueprintName = (activeDirectiveConfig as any)?.activeBlueprint || (activeDirectiveConfig as any)?.name || "Aviation ATS Blueprint";
+  console.info(`[Directive Check] Blueprint: ${blueprintName} | Custom Override: ${customDirective ? "active" : "inactive"} | Status: Injected at system prompt TOP`);
 
   const userPromptText = (split.user ? split.user + "\n\n---\n\n" : "") + `SOURCE RESUME (be truthful to this — never invent employers, dates, or metrics):\n${JSON.stringify({
     name: resume.name,
