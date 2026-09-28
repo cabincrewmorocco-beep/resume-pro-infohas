@@ -56,6 +56,7 @@ import { ApplicationTracker } from "./modules/ApplicationTracker";
 import { ResumeReviewPlatform } from "./modules/ResumeReviewPlatform";
 import { BatchOptimizer } from "./modules/BatchOptimizer";
 import { InterviewSimulatorModule } from "./modules/InterviewSimulator";
+import { ProfessionalTemplateGallery } from "@/components/resume/ProfessionalTemplateGallery";
 import { SafeRender } from "./SafeRender";
 import { GlobalErrorCatcher } from "@/components/shared/GlobalErrorCatcher";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ const VIEW_COMPONENTS: Record<ViewKey, React.FC> = {
   resumes: MyResumes,
   "ats-checker": ATSChecker,
   builder: Builder,
+  templates: ProfessionalTemplateGallery,
   optimizer: Optimizer,
   "cover-letter": CoverLetter,
   "interview-simulator": InterviewSimulatorModule,

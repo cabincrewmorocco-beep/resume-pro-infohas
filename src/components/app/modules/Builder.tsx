@@ -2518,6 +2518,16 @@ ${resumeContext}
                         </button>
                       ))}
                     </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setView("templates")}
+                      className="w-full mt-2 text-xs gap-1.5 border-brand/40 text-brand hover:bg-brand/10"
+                    >
+                      <Icon name="LayoutTemplate" className="w-3.5 h-3.5" />
+                      Browse 5 Professional ATS Layouts in Studio
+                    </Button>
                   </div>
                   <div>
                     <Label className="text-xs uppercase tracking-wide text-muted-foreground">Accent color</Label>

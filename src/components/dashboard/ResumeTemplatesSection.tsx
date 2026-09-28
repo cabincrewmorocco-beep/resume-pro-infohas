@@ -288,8 +288,17 @@ export function ResumeTemplatesSection() {
             </CardDescription>
           </div>
 
-          {/* Quick Category Filters */}
+          {/* Quick Category Filters & Layout Studio Link */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setView("templates")}
+              className="text-xs h-8 rounded-lg shrink-0 gap-1.5 border-brand/40 text-brand hover:bg-brand/10"
+            >
+              <Icon name="Maximize2" className="w-3.5 h-3.5" />
+              Open Layout Studio
+            </Button>
             {[
               { id: "all", label: "All Styles" },
               { id: "ats", label: "ATS Clean" },

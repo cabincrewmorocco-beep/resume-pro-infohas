@@ -10,6 +10,7 @@ import { scoreATS, scoreLabel } from "@/lib/ats";
 import { parseResumeFile } from "@/lib/parser";
 import { toast } from "sonner";
 import type { ResumeData, JobDescription } from "@/lib/types";
+import { ATSCriteriaInspector } from "@/components/optimizer/ATSCriteriaInspector";
 
 export function ATSChecker() {
   const resumes = useApp((s) => s.resumes);
@@ -343,6 +344,11 @@ export function ATSChecker() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Deep Keyword Density & Formatting Consistency Inspector */}
+          <div className="lg:col-span-3">
+            <ATSCriteriaInspector resume={resume} jobDescription={jd} onApplyFix={run} />
+          </div>
 
           {/* CTA to optimizer */}
           <Card className="lg:col-span-3 gradient-brand text-white">
