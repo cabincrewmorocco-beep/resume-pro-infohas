@@ -377,7 +377,7 @@ export function TopBar() {
                 <div className="text-sm font-semibold truncate">{user?.name || "Active User"}</div>
                 <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  Firebase
+                  Supabase
                 </span>
               </div>
               <div className="text-xs text-muted-foreground font-normal truncate mt-0.5">{user?.email || "Connected"}</div>

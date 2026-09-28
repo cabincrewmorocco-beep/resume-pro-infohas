@@ -15,7 +15,7 @@ export interface User {
   createdAt?: string;
   updatedAt?: string;
   lastLoginAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export type ResumeRegion = "gulf" | "us" | "uk_eu" | "apac";
@@ -40,7 +40,7 @@ export interface ContactInfo {
   github?: string;
   region?: ResumeRegion;
   personalDetails?: Record<string, string>;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeExperience {
@@ -53,7 +53,7 @@ export interface ResumeExperience {
   current?: boolean;
   bullets: string[];
   highlights?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeEducation {
@@ -66,7 +66,7 @@ export interface ResumeEducation {
   endDate?: string;
   gpa?: string;
   highlights?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeSkill {
@@ -74,7 +74,7 @@ export interface ResumeSkill {
   name: string;
   category?: string;
   level?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeLanguage {
@@ -83,7 +83,7 @@ export interface ResumeLanguage {
   name?: string;
   proficiency?: string;
   fluency?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeCertification {
@@ -92,7 +92,7 @@ export interface ResumeCertification {
   issuer?: string;
   date?: string;
   url?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeProject {
@@ -103,7 +103,7 @@ export interface ResumeProject {
   url?: string;
   technologies?: string[];
   bullets?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface DynamicSection {
@@ -114,7 +114,7 @@ export interface DynamicSection {
   items?: any[];
   content?: string;
   bullets?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeLayoutModel {
@@ -154,7 +154,7 @@ export interface ResumeLayoutModel {
   photoBorderRadius?: number;
   bulletIndentMm?: number;
   contactSpacing?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export function resolveSectionAlignment(layout: any, sectionType: string): TextAlignment {
@@ -190,7 +190,7 @@ export interface ResumeData {
   parentResumeId?: string;
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface JobDescription {
@@ -210,7 +210,7 @@ export interface JobDescription {
   analysis?: any;
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface CoverLetter {
@@ -224,7 +224,7 @@ export interface CoverLetter {
   date?: string;
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ATSScoreBreakdown {
@@ -234,7 +234,7 @@ export interface ATSScoreBreakdown {
   content?: number;
   grammar?: number;
   completeness?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ATSRecommendation {
@@ -245,7 +245,7 @@ export interface ATSRecommendation {
   message?: string;
   severity?: "low" | "medium" | "high" | "critical" | string;
   action?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ATSReport {
@@ -269,7 +269,7 @@ export interface ATSReport {
   breakdown?: Record<string, number>;
   timestamp?: string;
   createdAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeReviewReport {
@@ -279,8 +279,9 @@ export interface ResumeReviewReport {
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  jobMatch?: any;
   createdAt: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface CareerMaterial {
@@ -292,7 +293,7 @@ export interface CareerMaterial {
   tags?: string[];
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface InterviewPackage {
@@ -304,7 +305,7 @@ export interface InterviewPackage {
   questions?: any[];
   scenarios?: any[];
   createdAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface InterviewScenario {
@@ -315,17 +316,30 @@ export interface InterviewScenario {
   industry?: string;
   description?: string;
   questions?: any[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
+
+export type InterviewQuestionSubType =
+  | "hr"
+  | "behavioral"
+  | "star"
+  | "technical"
+  | "situational"
+  | "company-fit"
+  | "leadership"
+  | "problem-solving"
+  | "resume-specific"
+  | "jd-specific";
 
 export interface InterviewQuestion {
   id: string;
   question: string;
   category?: string;
+  subType?: InterviewQuestionSubType;
   difficulty?: string;
   expectedPoints?: string[];
   sampleAnswer?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface InterviewSessionRecord {
@@ -337,7 +351,7 @@ export interface InterviewSessionRecord {
   score: number;
   answers?: any[];
   feedback?: any;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface InterviewRecordingMeta {
@@ -351,8 +365,8 @@ export type AIProviderType = "gemini" | "openai" | "claude" | "puter" | "groq" |
 
 export interface AIProvider {
   id: string;
-  name: string;
-  type: string;
+  name?: string;
+  type?: string;
   providerCategory?: string;
   supportsServerSide?: boolean;
   supportsClientSide?: boolean;
@@ -386,7 +400,7 @@ export interface AIProvider {
   status?: string;
   usage?: any;
   health?: any;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIProviderLog {
@@ -404,7 +418,7 @@ export interface AIProviderLog {
   error?: string;
   promptPreview?: string;
   cost?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIProviderSettings {
@@ -414,7 +428,7 @@ export interface AIProviderSettings {
   autoRotateKeys?: boolean;
   maxRetries?: number;
   timeoutMs?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface FallbackChainEntry {
@@ -428,7 +442,7 @@ export interface FallbackChainConfig {
   chain?: FallbackChainEntry[] | any[];
   entries?: any[];
   autoHeal?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface PromptTemplate {
@@ -443,7 +457,7 @@ export interface PromptTemplate {
   isActive?: boolean;
   isBuiltIn?: boolean;
   variables?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface BrandingConfig {
@@ -455,7 +469,7 @@ export interface BrandingConfig {
   companyName?: string;
   supportEmail?: string;
   copyright?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface FeatureFlags {
@@ -474,7 +488,7 @@ export interface FeatureFlags {
   enableSelfHealing?: boolean;
   enableModelArena?: boolean;
   enableZenQuotaGrace?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentSupervisorDirectives {
@@ -485,7 +499,7 @@ export interface AgentSupervisorDirectives {
   enableDebugLogs?: boolean;
   enableDiffViewer?: boolean;
   temperature?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentSummaryDirectives {
@@ -493,7 +507,7 @@ export interface AgentSummaryDirectives {
   preserveFacts?: boolean;
   maxCharacters?: number;
   minCharacters?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentSkillsDirectives {
@@ -501,7 +515,7 @@ export interface AgentSkillsDirectives {
   allowTransferableSkills?: boolean;
   allowCompanyKeywords?: boolean;
   allowLocationKeywords?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentExperienceDirectives {
@@ -511,18 +525,18 @@ export interface AgentExperienceDirectives {
   rewriteDates?: boolean;
   rewriteLocation?: boolean;
   maxExpansionPercent?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentEducationDirectives {
   formatOnly?: boolean;
   stripSectionHeaders?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentLanguagesDirectives {
   formatOnly?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentGuardianDirectives {
@@ -532,21 +546,21 @@ export interface AgentGuardianDirectives {
   enforceNoDuplicates?: boolean;
   enforceSummaryQuality?: boolean;
   minimumScore?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentAdditionalInfoDirectives {
   preserveSection?: boolean;
   improveWording?: boolean;
   stripSectionHeaders?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentHeadlineDirectives {
   rewriteHeadline?: boolean;
   maxHeadlineChars?: number;
   headlineTone?: "exact-title-match" | "seniority-adjusted" | "jd-aligned" | "preserve";
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentCertificationsDirectives {
@@ -554,7 +568,7 @@ export interface AgentCertificationsDirectives {
   stripExpiredCerts?: boolean;
   maxCertAgeYears?: number;
   maxCertEntries?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentDirectives {
@@ -568,7 +582,7 @@ export interface AgentDirectives {
   additionalInfo?: AgentAdditionalInfoDirectives;
   headline?: AgentHeadlineDirectives;
   certifications?: AgentCertificationsDirectives;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ToneWritingConfig {
@@ -581,7 +595,7 @@ export interface ToneWritingConfig {
   requireQuantification?: boolean;
   experienceFormula?: "auto" | "star" | "xyz";
   brevity?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface CustomKeywordsConfig {
@@ -590,7 +604,7 @@ export interface CustomKeywordsConfig {
   requiredKeywords?: string[];
   forbiddenKeywords?: string[];
   keywordPlacement?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface OptimizerDirectiveConfig {
@@ -639,7 +653,7 @@ export interface OptimizerDirectiveConfig {
   dateFormat?: "auto" | "month-year" | "short-date" | "year-only";
   contactSpacing?: "stacked" | "single-line";
   customSectionInstructions?: Record<string, string>;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AuditLog {
@@ -649,7 +663,7 @@ export interface AuditLog {
   userId?: string;
   details?: any;
   level?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIBuildResult {
@@ -659,7 +673,7 @@ export interface AIBuildResult {
   duration?: number;
   output?: string;
   timestamp?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AITestResult {
@@ -672,7 +686,7 @@ export interface AITestResult {
   output?: string;
   failures?: any[];
   timestamp?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIFile {
@@ -681,7 +695,7 @@ export interface AIFile {
   language?: string;
   size?: number;
   content?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AITask {
@@ -692,7 +706,7 @@ export interface AITask {
   progress?: number;
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIWorkspacePatch {
@@ -703,7 +717,7 @@ export interface AIWorkspacePatch {
   diff?: string;
   applied?: boolean;
   createdAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIGitBranch {
@@ -714,7 +728,7 @@ export interface AIGitBranch {
   lastCommit?: string;
   commitCount?: number;
   createdAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIGitCommit {
@@ -723,7 +737,7 @@ export interface AIGitCommit {
   author: string;
   timestamp: string;
   filesChanged?: number | string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIRollback {
@@ -735,7 +749,7 @@ export interface AIRollback {
   patchTitle?: string;
   rolledBackBy?: string;
   previousState?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevAgentSettings {
@@ -753,7 +767,7 @@ export interface AIDevAgentSettings {
   testOnCommit?: boolean;
   level?: string;
   hideDevAgentFromNonAdmin?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevIssue {
@@ -767,7 +781,7 @@ export interface AIDevIssue {
   recommendedFix?: string;
   suggestedFix?: string;
   status: "open" | "closed" | "fixed" | "ignored" | string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevPatch {
@@ -785,14 +799,14 @@ export interface AIDevPatch {
   provider?: string;
   model?: string;
   createdAt: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevFeatureFile {
   path: string;
   content: string;
   type: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevFeature {
@@ -805,7 +819,7 @@ export interface AIDevFeature {
   provider?: string;
   model?: string;
   createdAt: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface HealthCheck {
@@ -814,14 +828,14 @@ export interface HealthCheck {
   status: "healthy" | "degraded" | "down" | string;
   details: string;
   lastChecked: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AppHealthDashboard {
   overall: number;
   checks: HealthCheck[];
   lastFullScan: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevAgentHistory {
@@ -829,7 +843,7 @@ export interface AIDevAgentHistory {
   timestamp?: string;
   summary?: string;
   type?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIDevReport {
@@ -845,7 +859,7 @@ export interface AIDevReport {
   provider?: string;
   model?: string;
   createdBy?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIHealingIssue {
@@ -861,7 +875,7 @@ export interface AIHealingIssue {
   code?: string;
   status: "detected" | "healing" | "resolved" | "failed" | "open" | "closed" | "fixed" | "needs_review";
   resolvedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AIHealingReport {
@@ -870,7 +884,7 @@ export interface AIHealingReport {
   issuesCount: number;
   issuesFound?: number;
   resolvedCount: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export type ViewKey =
@@ -900,7 +914,7 @@ export interface RenderDocumentContact {
   linkedin?: string;
   github?: string;
   website?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderDocumentSection {
@@ -908,7 +922,7 @@ export interface RenderDocumentSection {
   title: string;
   content?: string;
   items?: any[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderDocument {
@@ -918,7 +932,7 @@ export interface RenderDocument {
   contact: RenderDocumentContact;
   layout: ResumeLayoutModel;
   sections: RenderDocumentSection[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderContentItem {
@@ -932,13 +946,13 @@ export interface RenderContentItem {
   bullets?: string[];
   groups?: Array<{ label: string; items: string[] }>;
   cells?: Array<{ text?: string; align?: string; bold?: boolean; [key: string]: unknown }>;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderNestedBulletList {
   items?: string[];
   groups: Array<{ label: string; items: string[] }>;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderNode {
@@ -953,7 +967,7 @@ export interface PipelineContext {
   id: string;
   resume: ResumeData;
   jd?: JobDescription;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface PipelineProfile {
@@ -961,7 +975,7 @@ export interface PipelineProfile {
   name: string;
   description?: string;
   stages?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface AgentConfig {
@@ -971,7 +985,7 @@ export interface AgentConfig {
   model?: string;
   temperature?: number;
   prompt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface PromptVersion {
@@ -988,7 +1002,7 @@ export interface SectionFingerprint {
   contentCount: number;
   bulletCount: number;
   hash: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface PreservationSnapshot {
@@ -1006,7 +1020,7 @@ export interface PreservationSnapshot {
     projects: string[];
     certifications: string[];
     dynamicSections: string[];
-    [key: string]: unknown;
+    [key: string]: any;
   };
   immutable: {
     name: string;
@@ -1020,7 +1034,7 @@ export interface PreservationSnapshot {
     educationDates: Array<{ id: string; startDate?: string; endDate?: string }>;
     certificationNames: string[];
     projectNames: string[];
-    [key: string]: unknown;
+    [key: string]: any;
   };
   optimizable?: {
     summaryLength?: number;
@@ -1028,7 +1042,7 @@ export interface PreservationSnapshot {
     bulletCount?: number;
     highlightCount?: number;
     skillCategoryCount?: number;
-    [key: string]: unknown;
+    [key: string]: any;
   };
-  [key: string]: unknown;
+  [key: string]: any;
 }

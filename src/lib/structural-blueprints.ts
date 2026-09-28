@@ -12,7 +12,7 @@ export interface ResumeSectionStructure {
   maxBulletsPerEntry?: number;
   maxItems?: number;
   hints?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface StructuralBlueprint {
@@ -26,7 +26,7 @@ export interface StructuralBlueprint {
     bulletStyle?: string;
     entityOrder?: string;
   };
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export const STRUCTURAL_BLUEPRINTS: StructuralBlueprint[] = [

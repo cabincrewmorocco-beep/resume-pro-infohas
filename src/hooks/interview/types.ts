@@ -88,6 +88,22 @@ export interface InterviewSessionRecord {
   jdId?: string;
   company?: string;
   role?: string;
+  industry?: string;
+  packageId?: string;
+  overallScore?: number;
+  answers?: Array<{
+    questionId?: string;
+    question?: string;
+    questionText?: string;
+    transcript?: string;
+    answer?: string;
+    score?: number;
+    feedback?: string;
+    durationSeconds?: number;
+    starBreakdown?: any;
+    betterAnswer?: string;
+  }>;
+  analytics?: Record<string, any>;
   /** Sonru phases: preparation → recording → review → complete. */
   status: "in_progress" | "completed" | "abandoned";
   recordings: InterviewRecordingMeta[];

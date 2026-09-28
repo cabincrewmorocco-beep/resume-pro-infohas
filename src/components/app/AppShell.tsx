@@ -55,6 +55,7 @@ import { VoiceMockInterview } from "./modules/VoiceMockInterview";
 import { ApplicationTracker } from "./modules/ApplicationTracker";
 import { ResumeReviewPlatform } from "./modules/ResumeReviewPlatform";
 import { BatchOptimizer } from "./modules/BatchOptimizer";
+import { InterviewSimulatorModule } from "./modules/InterviewSimulator";
 import { SafeRender } from "./SafeRender";
 import { GlobalErrorCatcher } from "@/components/shared/GlobalErrorCatcher";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,7 @@ const VIEW_COMPONENTS: Record<ViewKey, React.FC> = {
   builder: Builder,
   optimizer: Optimizer,
   "cover-letter": CoverLetter,
+  "interview-simulator": InterviewSimulatorModule,
   interview: Interview,
   "jd-scraper": JDScraper,
   "ai-tools": AITools,

@@ -33,7 +33,7 @@ export interface ResumeContact {
   location?: string;
   linkedin?: string;
   website?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface DynamicSectionItem {
@@ -43,7 +43,7 @@ export interface DynamicSectionItem {
   date?: string;
   description?: string;
   bullets?: string[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface BlueprintSection {

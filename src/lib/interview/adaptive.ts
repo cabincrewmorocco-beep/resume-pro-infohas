@@ -700,7 +700,7 @@ function openingQuestionLike(opts: {
  */
 function interviewRecordOptions(
   memory: InterviewMemory,
-  q: { category: InterviewQuestion["category"]; difficulty: string },
+  q: { category?: InterviewQuestion["category"]; difficulty?: string },
   purpose: string
 ): RecordOptions {
   const last = memory.answered[memory.answered.length - 1];

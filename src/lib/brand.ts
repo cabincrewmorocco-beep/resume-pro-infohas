@@ -76,6 +76,7 @@ export const NAV_USER: { key: string; label: string; icon: string; group: string
   { key: "builder", label: "Resume Builder", icon: "FilePlus2", group: "Tools" },
   { key: "optimizer", label: "Resume Optimizer", icon: "Wand2", group: "Tools" },
   { key: "cover-letter", label: "Cover Letters", icon: "Mail", group: "Tools" },
+  { key: "interview-simulator", label: "Interview Simulator", icon: "Sparkles", group: "Tools" },
   { key: "interview", label: "Interview Prep", icon: "MessagesSquare", group: "Tools" },
   { key: "candidate-experience", label: "Live Interview", icon: "Radio", group: "Tools" },
   { key: "jd-scraper", label: "Job Scraper", icon: "Search", group: "Tools" },

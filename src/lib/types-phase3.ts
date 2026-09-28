@@ -13,7 +13,7 @@ export interface RenderNodePosition {
   yMm?: number;
   widthMm?: number;
   heightMm?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderNodeStyle {
@@ -30,7 +30,7 @@ export interface RenderNodeStyle {
   marginBottomMm?: number;
   marginLeftMm?: number;
   marginRightMm?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface RenderNode {
@@ -40,7 +40,7 @@ export interface RenderNode {
   position?: RenderNodePosition;
   style?: RenderNodeStyle;
   children?: RenderNode[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ResumeTheme {
@@ -64,7 +64,7 @@ export interface ResumeTheme {
   marginRightMm?: number;
   bodyFontSizePt?: number;
   fontSizeMm?: number;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface PageLayout {
@@ -83,7 +83,7 @@ export interface PageLayout {
   currentY?: number;
   remainingHeightMm?: number;
   overflow?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface LayoutResult {
@@ -95,7 +95,7 @@ export interface LayoutResult {
   underflowAmount?: number;
   nodes?: RenderNode[];
   hasOverflow?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export type CanonicalSectionType =
@@ -118,14 +118,14 @@ export interface CanonicalSectionItem {
   location?: string;
   bullets?: string[];
   content?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface CanonicalSection {
   type: CanonicalSectionType;
   title: string;
   items: CanonicalSectionItem[];
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface CanonicalResume {
@@ -137,8 +137,17 @@ export interface CanonicalResume {
     location?: string;
     links?: Array<{ label: string; url: string }>;
   };
+  name?: string;
+  headline?: string;
+  photoUrl?: string;
+  contact?: {
+    phone?: string;
+    email?: string;
+    location?: string;
+  };
   sections: CanonicalSection[];
   metadata?: Record<string, unknown>;
+  [key: string]: any;
 }
 
 export type ResumeTemplate = "ats-professional" | "modern" | "classic" | "minimal" | "executive" | "creative" | "technical" | string;
@@ -154,5 +163,5 @@ export interface CompressionResult {
   compressionRatio?: number;
   stepsApplied?: string[];
   fitsOnOnePage?: boolean;
-  [key: string]: unknown;
+  [key: string]: any;
 }

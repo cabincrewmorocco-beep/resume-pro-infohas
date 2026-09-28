@@ -139,6 +139,9 @@ import { exportResumePDF, exportResumeDOCX, exportResumeTXT, exportResumeDOC } f
 import { assertResumeExportable } from "@/lib/resume-guardian-agent";
 import { A4Preview } from "@/components/resume/A4Preview";
 import { ATSMatchMeter } from "@/components/optimizer/ATSMatchMeter";
+import { LinkedInImportModal } from "@/components/resume/LinkedInImportModal";
+import { LinkedInOAuthModal } from "@/components/resume/LinkedInOAuthModal";
+import { exportTemplateToA4Pdf } from "@/lib/integrations/html2pdf-service";
 import { toast } from "sonner";
 import { extractJSON } from "@/lib/ai";
 import { recordAI, setFlightScope } from "@/lib/ai/flight-recorder";
@@ -390,6 +393,8 @@ export function Builder() {
   const [scale, setScale] = useState(0.6);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [linkedinModalOpen, setLinkedinModalOpen] = useState(false);
+  const [linkedinOAuthModalOpen, setLinkedinOAuthModalOpen] = useState(false);
   const [spellCheckOpen, setSpellCheckOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const {
@@ -1865,15 +1870,52 @@ ${resumeContext}
     const currentResume = useApp.getState().resumes.find((r) => r.id === (activeId || resume?.id)) ?? resume;
     assertResumeExportable(currentResume);
     setExporting(true);
-    await new Promise((r) => setTimeout(r, 100));
-    const result = await exportResumePDF(currentResume, { enforceOnePage: true });
-    setExporting(false);
-    if (result.ok) {
-      incUsage("downloads");
-      log({ actor: "you", action: "Exported resume (PDF)", category: "export", details: `${currentResume.name}_resume.pdf · 1 page`, severity: "info" });
-      toast.success("PDF exported. Validated: 1 A4 page.");
-    } else {
-      toast.error(result.error || "Export failed.");
+
+    try {
+      // Client-side conversion of currently selected resume template using html2canvas & jsPDF
+      const previewElement = previewRef.current;
+      if (previewElement) {
+        toast.loading("Converting template to A4 document via html2canvas & jsPDF...", { id: "a4-pdf-export" });
+        const result = await exportTemplateToA4Pdf(previewElement, {
+          filename: `${(currentResume.name || "Resume").replace(/\s+/g, "_")}_A4.pdf`,
+          scale: 2,
+        });
+        toast.dismiss("a4-pdf-export");
+        if (result.ok) {
+          incUsage("downloads");
+          log({
+            actor: "you",
+            action: "Exported resume (A4 PDF)",
+            category: "export",
+            details: `${result.filename} · ${result.pageCount} page(s) via html2canvas + jsPDF`,
+            severity: "info",
+          });
+          toast.success(`A4 PDF downloaded (${result.pageCount} page${result.pageCount > 1 ? "s" : ""}) via html2canvas + jsPDF!`);
+          return;
+        }
+      }
+
+      // Fallback to jsPDF standard generator
+      await new Promise((r) => setTimeout(r, 100));
+      const fallbackResult = await exportResumePDF(currentResume, { enforceOnePage: true });
+      if (fallbackResult.ok) {
+        incUsage("downloads");
+        log({ actor: "you", action: "Exported resume (PDF)", category: "export", details: `${currentResume.name}_resume.pdf · 1 page`, severity: "info" });
+        toast.success("PDF exported. Validated: 1 A4 page.");
+      } else {
+        toast.error(fallbackResult.error || "Export failed.");
+      }
+    } catch (err: any) {
+      toast.dismiss("a4-pdf-export");
+      console.warn("Falling back to standard jsPDF:", err);
+      const fallbackResult = await exportResumePDF(currentResume, { enforceOnePage: true });
+      if (fallbackResult.ok) {
+        toast.success("PDF exported via jsPDF.");
+      } else {
+        toast.error(err?.message || "PDF export failed.");
+      }
+    } finally {
+      setExporting(false);
     }
   };
   const onExportDOCX = async () => {
@@ -2120,6 +2162,18 @@ ${resumeContext}
             {importing ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="Upload" className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">Import</span>
           </Button>
+
+          {/* LinkedIn Profile Import — OAuth & JSON parser */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setLinkedinOAuthModalOpen(true)}
+            className="gap-1.5 border-[#0A66C2]/40 text-[#0A66C2] hover:bg-[#0A66C2]/10 h-8"
+            title="Import user profile data via OAuth or JSON to populate form fields"
+          >
+            <Icon name="Linkedin" className="w-3.5 h-3.5 text-[#0A66C2]" />
+            <span className="hidden sm:inline">Import from</span> LinkedIn
+          </Button>
           <Button variant="outline" size="sm" onClick={onExportTXT} className="gap-1.5 h-8" title="Export as plain text">
             <Icon name="FileText" className="w-3.5 h-3.5" /> <span className="hidden sm:inline">TXT</span>
           </Button>
@@ -2129,9 +2183,15 @@ ${resumeContext}
           <Button variant="outline" size="sm" onClick={onExportDOCX} disabled={exporting} className="gap-1.5 h-8">
             <Icon name="FileType" className="w-3.5 h-3.5" /> <span className="hidden sm:inline">DOCX</span>
           </Button>
-          <Button size="sm" onClick={onExportPDF} disabled={exporting} className="bg-brand hover:bg-brand-dark text-white gap-1.5 h-8">
+          <Button
+            size="sm"
+            onClick={onExportPDF}
+            disabled={exporting}
+            className="bg-brand hover:bg-brand-dark text-white gap-1.5 h-8 font-medium shadow-xs"
+            title="Client-side conversion of currently selected template to formatted A4 document via html2canvas & jsPDF"
+          >
             {exporting ? <Icon name="Loader2" className="w-3.5 h-3.5 animate-spin" /> : <Icon name="Download" className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">PDF</span>
+            <span>Download as PDF</span>
           </Button>
         </div>
       </div>
@@ -2157,6 +2217,24 @@ ${resumeContext}
         onJump={(i) => { const d = jumpTo(i); if (d) { patch(d); return true; } return false; }}
         open={historyOpen}
         onToggle={() => setHistoryOpen(v => !v)}
+      />
+
+      <LinkedInImportModal
+        open={linkedinModalOpen}
+        onOpenChange={setLinkedinModalOpen}
+        onApplyProfile={(data) => {
+          patch(data);
+          toast.success("LinkedIn profile applied to active resume!");
+        }}
+      />
+
+      <LinkedInOAuthModal
+        open={linkedinOAuthModalOpen}
+        onOpenChange={setLinkedinOAuthModalOpen}
+        onPopulateResumeFields={(data) => {
+          patch(data);
+          toast.success(`Populated form fields for ${data.name || "candidate"} from LinkedIn profile!`);
+        }}
       />
 
       <ATSScoreInline

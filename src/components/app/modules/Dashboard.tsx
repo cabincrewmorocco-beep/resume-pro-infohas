@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,13 @@ import { useApp } from "@/lib/store";
 import { TEMPLATES } from "@/lib/brand";
 import { dueFollowUps } from "@/lib/applications-logic";
 import { ResumeStrengthGauge } from "./ResumeStrengthGauge";
+import { ResumeTemplatesSection } from "@/components/dashboard/ResumeTemplatesSection";
+import { ATSScoreboard } from "@/components/dashboard/ATSScoreboard";
+import { SkillGapVisualGraph } from "@/components/dashboard/SkillGapVisualGraph";
+import { ResumeHealthWidget } from "@/components/dashboard/ResumeHealthWidget";
+import { LinkedInImportModal } from "@/components/resume/LinkedInImportModal";
+import { downloadResumeAsPDF, downloadResumeAsDOCX } from "@/lib/dashboard-exporter";
+import type { ResumeData } from "@/lib/types";
 
 export function Dashboard() {
   const user = useApp((s) => s.user);
@@ -25,6 +33,20 @@ export function Dashboard() {
   const activeProviders = providers.filter((p) => p.isActive).length;
   const followUps = dueFollowUps(applications);
 
+  const [downloading, setDownloading] = useState<{ id: string; format: "pdf" | "docx" } | null>(null);
+  const [linkedinModalOpen, setLinkedinModalOpen] = useState(false);
+
+  const handleDownloadResume = async (e: React.MouseEvent, resume: ResumeData, format: "pdf" | "docx") => {
+    e.stopPropagation();
+    setDownloading({ id: resume.id, format });
+    if (format === "pdf") {
+      await downloadResumeAsPDF(resume);
+    } else {
+      await downloadResumeAsDOCX(resume);
+    }
+    setDownloading(null);
+  };
+
   const stats = [
     { label: "Resumes", value: resumes.length, icon: "FileText", color: "#1154A3", action: () => setView("resumes") },
     { label: "ATS checks", value: atsReports.length, icon: "ScanText", color: "#10B981", action: () => setView("ats-checker") },
@@ -34,11 +56,13 @@ export function Dashboard() {
   ];
 
   const quickActions = [
+    { title: "Interview Simulator", desc: "Context-aware mock interview with Gemini.", icon: "Sparkles", color: "#8B5CF6", action: () => setView("interview-simulator") },
     { title: "Check ATS score", desc: "Upload your resume and get an instant ATS analysis.", icon: "ScanText", color: "#10B981", action: () => setView("ats-checker") },
     { title: "Build a new resume", desc: "Start from a template — fits one A4 page, guaranteed.", icon: "FilePlus2", color: "#1154A3", action: () => setView("builder") },
     { title: "Optimize for a job", desc: "Match your resume to a job description with AI.", icon: "Wand2", color: "#F59E0B", action: () => setView("optimizer") },
     { title: "Generate cover letter", desc: "Modern, traditional, executive, or email.", icon: "Mail", color: "#8B5CF6", action: () => setView("cover-letter") },
     { title: "Prep for interviews", desc: "Get STAR-method answers for your target role.", icon: "MessagesSquare", color: "#EC4899", action: () => setView("interview") },
+    { title: "Live Job Alerts", desc: "Get notified of matching openings via Google Search.", icon: "Bell", color: "#10B981", action: () => setView("job-alerts") },
     { title: "Track applications", desc: "Organize your pipeline from wishlist to offer — with follow-up reminders.", icon: "KanbanSquare", color: "#0EA5E9", action: () => setView("app-tracker") },
     { title: "Scrape a job posting", desc: "Extract keywords from any URL.", icon: "Search", color: "#0EA5E9", action: () => setView("jd-scraper") },
   ];
@@ -127,6 +151,15 @@ export function Dashboard() {
       {/* Real-time Resume Strength Gauge */}
       <ResumeStrengthGauge onNavigate={(view) => setView(view as any)} />
 
+      {/* Resume Health Score & Letter Grade Widget */}
+      <ResumeHealthWidget />
+
+      {/* ATS Scoreboard & Keyword Matcher */}
+      <ATSScoreboard />
+
+      {/* Top 10 Required Skills & Knowledge Gap Visual Graph */}
+      <SkillGapVisualGraph />
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 w-full max-w-full">
         {/* Quick actions */}
         <Card className="lg:col-span-2 w-full max-w-full overflow-hidden">
@@ -211,6 +244,9 @@ export function Dashboard() {
         </div>
       </div>
 
+      {/* Resume Templates & Layout Styles Section */}
+      <ResumeTemplatesSection />
+
       {/* Recent resumes with fluid responsive grid */}
       <Card className="w-full max-w-full overflow-hidden">
         <CardHeader className="p-4 sm:p-6 pb-3">
@@ -219,39 +255,120 @@ export function Dashboard() {
               <CardTitle className="flex items-center gap-2 text-base sm:text-lg truncate"><Icon name="FileText" className="w-4 h-4 text-brand shrink-0" /> Your resumes</CardTitle>
               <CardDescription className="text-xs sm:text-sm">{resumes.length} total · {jds.length} job descriptions saved</CardDescription>
             </div>
-            <Button size="sm" onClick={() => setView("builder")} className="bg-brand hover:bg-brand-dark text-white gap-2 shrink-0 self-start sm:self-auto">
-              <Icon name="Plus" className="w-4 h-4" /> New
-            </Button>
+            <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setLinkedinModalOpen(true)}
+                className="gap-1.5 border-[#0A66C2]/40 text-[#0A66C2] hover:bg-[#0A66C2]/10 h-9 text-xs"
+                title="Import profile data from LinkedIn to auto-fill resume builder sections"
+              >
+                <Icon name="Linkedin" className="w-3.5 h-3.5 text-[#0A66C2]" />
+                <span className="hidden sm:inline">Import from</span> LinkedIn
+              </Button>
+              <Button size="sm" onClick={() => setView("builder")} className="bg-brand hover:bg-brand-dark text-white gap-2 h-9 text-xs">
+                <Icon name="Plus" className="w-4 h-4" /> New
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-4 sm:p-6 pt-2">
           <div className="grid grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3 sm:gap-4 w-full">
             {resumes.map((r) => {
               const template = TEMPLATES.find((t) => t.id === r.template);
+              const isDownloadingPdf = downloading?.id === r.id && downloading?.format === "pdf";
+              const isDownloadingDocx = downloading?.id === r.id && downloading?.format === "docx";
+
               return (
-                <button
+                <div
                   key={r.id}
-                  onClick={() => { setActiveResume(r.id); setView("builder"); }}
-                  className="group text-left rounded-xl border border-border bg-card p-3.5 sm:p-4 hover:shadow-premium hover:-translate-y-0.5 transition-all w-full min-w-0 overflow-hidden"
+                  className="group rounded-xl border border-border bg-card p-3.5 sm:p-4 hover:shadow-premium transition-all w-full min-w-0 overflow-hidden flex flex-col justify-between"
                 >
-                  <div className="flex items-center justify-between mb-2 gap-2">
-                    <div className="text-sm font-semibold truncate flex-1" title={r.title || r.name}>{r.title || r.name}</div>
-                    <Badge variant={r.source === "ai-optimized" ? "brand" : r.source === "upload" ? "gold" : "outline"} className="text-[10px] capitalize shrink-0">
-                      {r.source === "ai-optimized" ? "Optimized" : r.source === "upload" ? "Uploaded" : (template?.name ?? r.template)}
-                    </Badge>
+                  <div
+                    onClick={() => {
+                      setActiveResume(r.id);
+                      setView("builder");
+                    }}
+                    className="cursor-pointer space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <div
+                        className="text-sm font-semibold truncate flex-1 hover:text-brand transition-colors"
+                        title={r.title || r.name}
+                      >
+                        {r.title || r.name}
+                      </div>
+                      <Badge
+                        variant={r.source === "ai-optimized" ? "brand" : r.source === "upload" ? "gold" : "outline"}
+                        className="text-[10px] capitalize shrink-0"
+                      >
+                        {r.source === "ai-optimized" ? "Optimized" : r.source === "upload" ? "Uploaded" : (template?.name ?? r.template)}
+                      </Badge>
+                    </div>
+
+                    {r.title && r.name && r.title !== r.name && (
+                      <div className="text-xs text-muted-foreground truncate">{r.name}</div>
+                    )}
+                    {r.headline && <div className="text-xs text-muted-foreground truncate">{r.headline}</div>}
+
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1">
+                      <span className="flex items-center gap-1">
+                        <Icon name="Briefcase" className="w-3 h-3 shrink-0" /> {(r.experience || []).length} exp
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Icon name="Wrench" className="w-3 h-3 shrink-0" /> {(r.skills || []).length} skills
+                      </span>
+                    </div>
                   </div>
-                  {r.title && r.name && r.title !== r.name && (
-                    <div className="text-xs text-muted-foreground truncate mb-1">{r.name}</div>
-                  )}
-                  {r.headline && <div className="text-xs text-muted-foreground truncate">{r.headline}</div>}
-                  <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><Icon name="Briefcase" className="w-3 h-3 shrink-0" /> {(r.experience || []).length} exp</span>
-                    <span className="flex items-center gap-1"><Icon name="Wrench" className="w-3 h-3 shrink-0" /> {(r.skills || []).length} skills</span>
+
+                  {/* Action Bar: Edit in Builder + Direct PDF / DOCX Exports */}
+                  <div className="mt-3.5 pt-2.5 border-t border-border/50 flex items-center justify-between gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveResume(r.id);
+                        setView("builder");
+                      }}
+                      className="text-xs text-brand font-medium hover:underline flex items-center gap-1 shrink-0"
+                    >
+                      Edit <Icon name="ArrowRight" className="w-3 h-3 group-hover:translate-x-0.5 transition shrink-0" />
+                    </button>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={downloading !== null}
+                        onClick={(e) => handleDownloadResume(e, r, "pdf")}
+                        className="h-7 px-2 text-[11px] gap-1 hover:border-red-500/40 hover:bg-red-500/5 text-foreground"
+                        title="Download as PDF"
+                      >
+                        {isDownloadingPdf ? (
+                          <Icon name="Loader2" className="w-3 h-3 animate-spin text-red-500" />
+                        ) : (
+                          <Icon name="FileDown" className="w-3 h-3 text-red-500" />
+                        )}
+                        PDF
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={downloading !== null}
+                        onClick={(e) => handleDownloadResume(e, r, "docx")}
+                        className="h-7 px-2 text-[11px] gap-1 hover:border-blue-500/40 hover:bg-blue-500/5 text-foreground"
+                        title="Download as Word DOCX"
+                      >
+                        {isDownloadingDocx ? (
+                          <Icon name="Loader2" className="w-3 h-3 animate-spin text-blue-500" />
+                        ) : (
+                          <Icon name="FileText" className="w-3 h-3 text-blue-500" />
+                        )}
+                        DOCX
+                      </Button>
+                    </div>
                   </div>
-                  <div className="mt-3 text-xs text-brand font-medium flex items-center gap-1">
-                    Open builder <Icon name="ArrowRight" className="w-3 h-3 group-hover:translate-x-0.5 transition shrink-0" />
-                  </div>
-                </button>
+                </div>
               );
             })}
             {resumes.length === 0 && (
@@ -262,6 +379,12 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* LinkedIn Profile Auto-Fill Modal */}
+      <LinkedInImportModal
+        open={linkedinModalOpen}
+        onOpenChange={setLinkedinModalOpen}
+      />
     </div>
   );
 }

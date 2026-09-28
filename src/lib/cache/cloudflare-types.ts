@@ -143,7 +143,7 @@ export interface DurableObjectState {
 
 /** Combined Cloudflare bindings passed to handlers */
 export interface CloudflareBindings {
-  [key: string]: unknown;
+  [key: string]: any;
   DB?: D1Database | any;
   RESUME_KV?: KVNamespace | any;
   EXPORT_R2?: R2Bucket | any;

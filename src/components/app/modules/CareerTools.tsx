@@ -30,6 +30,9 @@ import { exportResumePDF } from "@/lib/exporter";
 import { toast } from "sonner";
 import type { ResumeData } from "@/lib/types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { MarketSalaryInsights } from "@/components/salary/MarketSalaryInsights";
+import { LinkedInImportModal } from "@/components/resume/LinkedInImportModal";
+import { JobAlertsManager } from "@/components/jobs/JobAlertsManager";
 import {
   Dialog,
   DialogContent,
@@ -94,47 +97,86 @@ function AIOutput({ output, loading }: { output: string; loading: boolean }) {
 export function LinkedinImport() {
   const addResume = useApp((s) => s.addResume);
   const log = useApp((s) => s.log);
-  const [url, setUrl] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [output, setOutput] = useState("");
-
-  const importProfile = async () => {
-    if (!url.match(/linkedin\.com\/in\//)) { toast.error("Enter a valid LinkedIn profile URL (linkedin.com/in/...)"); return; }
-    setLoading(true); setOutput("");
-    try {
-      const result = await recordAI({
-        systemPrompt: "You are a LinkedIn profile parser. Given a LinkedIn URL, generate a structured resume. Return ONLY valid JSON matching the resume format with: name, headline, contact, summary, experience, education, skills, languages.",
-        userPrompt: `Parse this LinkedIn profile URL and create a resume: ${url}\n\nIf you cannot access the URL, generate a template resume based on the URL structure. Return JSON with: name, headline, contact {email, phone, location, linkedin}, summary, experience [{title, company, location, startDate, endDate, bullets[]}], education [{institution, degree, startDate, endDate}], skills [{name}], languages [{name, proficiency}].`,
-        maxTokens: 3000,
-        taskCategory: "document",
-      });
-      const data = extractJSON<any>(result.text);
-      const resume: ResumeData = {
-        id: uid("r"), name: data.name || "Imported", headline: data.headline || "",
-        contact: data.contact || { linkedin: url }, summary: data.summary || "",
-        experience: (data.experience || []).map((e: any) => ({ id: uid("e"), ...e, bullets: e.bullets || [] })),
-        education: (data.education || []).map((e: any) => ({ id: uid("ed"), ...e })),
-        skills: (data.skills || []).map((s: any) => ({ id: uid("s"), name: s.name || s })),
-        languages: (data.languages || []).map((l: any) => ({ id: uid("l"), ...l })),
-        projects: [], certifications: [], template: "ats-professional", accentColor: "#1154A3",
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), source: "upload", fileName: "LinkedIn Import",
-      };
-      addResume(resume);
-      log({ actor: "you", action: "LinkedIn profile imported", category: "resume", details: resume.name, severity: "info" });
-      toast.success(`Imported: ${resume.name}`);
-      setOutput(`Successfully imported ${resume.name} as a new resume. You can edit it in My Resumes.`);
-    } catch (e: any) { toast.error(e?.message || "Import failed"); }
-    finally { setLoading(false); }
-  };
+  const setView = useApp((s) => s.setView);
+  const [modalOpen, setModalOpen] = useState(true);
 
   return (
     <div className="space-y-6">
-      <div><h1 className="font-display text-2xl font-bold flex items-center gap-2"><Icon name="Linkedin" className="w-6 h-6 text-brand" /> LinkedIn Import</h1><p className="text-sm text-muted-foreground mt-1">Import your LinkedIn profile and convert it to an editable resume.</p></div>
-      <Card><CardContent className="p-4 space-y-3">
-        <div><Label>LinkedIn Profile URL</Label><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.linkedin.com/in/your-profile" className="mt-1" /></div>
-        <Button onClick={importProfile} disabled={loading} className="bg-brand hover:bg-brand-dark text-white gap-2"><Icon name={loading ? "Loader2" : "Download"} className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> {loading ? "Importing..." : "Import Profile"}</Button>
-      </CardContent></Card>
-      <AIOutput output={output} loading={loading} />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="font-display text-2xl font-bold flex items-center gap-2">
+            <Icon name="Linkedin" className="w-6 h-6 text-[#0A66C2]" /> LinkedIn Profile Auto-Fill
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Import your LinkedIn profile via URL, PDF export, or text paste to auto-fill all resume builder sections.
+          </p>
+        </div>
+
+        <Button
+          onClick={() => setModalOpen(true)}
+          className="bg-[#0A66C2] hover:bg-[#084e96] text-white gap-2"
+        >
+          <Icon name="Linkedin" className="w-4 h-4" /> Open LinkedIn Importer
+        </Button>
+      </div>
+
+      <Card className="border border-border/80">
+        <CardContent className="p-6 space-y-4 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-[#0A66C2]/10 text-[#0A66C2] flex items-center justify-center mx-auto mb-2">
+            <Icon name="Linkedin" className="w-8 h-8" />
+          </div>
+          <h3 className="font-bold text-lg text-foreground">Save Manual Input Time</h3>
+          <p className="text-sm text-muted-foreground max-w-md mx-auto">
+            Instead of retyping work experiences, dates, bullets, skills, and education, import your LinkedIn profile to auto-fill your resume in seconds.
+          </p>
+
+          <div className="flex justify-center gap-3 pt-2">
+            <Button
+              onClick={() => setModalOpen(true)}
+              className="bg-[#0A66C2] hover:bg-[#084e96] text-white gap-2"
+            >
+              <Icon name="Download" className="w-4 h-4" /> Import from LinkedIn
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setView("builder")}
+              className="gap-2"
+            >
+              <Icon name="PenTool" className="w-4 h-4" /> Open Resume Builder
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <LinkedInImportModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        onApplyProfile={(data) => {
+          const newResume: ResumeData = {
+            id: uid("r"),
+            name: data.name || "LinkedIn Professional",
+            headline: data.headline || "",
+            contact: data.contact || { linkedin: "https://linkedin.com" },
+            summary: data.summary || "",
+            experience: (data.experience || []).map((e) => ({ ...e, id: uid("e") })),
+            education: (data.education || []).map((ed) => ({ ...ed, id: uid("ed") })),
+            skills: data.skills || [],
+            languages: data.languages || [],
+            projects: [],
+            certifications: [],
+            template: "ats-professional",
+            accentColor: "#1154A3",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            source: "upload",
+            fileName: "LinkedIn Import",
+          };
+          addResume(newResume);
+          log({ actor: "you", action: "LinkedIn profile imported", category: "resume", details: newResume.name, severity: "info" });
+          toast.success(`Imported ${newResume.name}! Opening Resume Builder...`);
+          setView("builder");
+        }}
+      />
     </div>
   );
 }
@@ -1073,38 +1115,7 @@ export function ResumeAnalytics() {
 // ============================================================================
 
 export function SalaryInsights() {
-  const [role, setRole] = useState("");
-  const [location, setLocation] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [output, setOutput] = useState("");
-
-  const analyze = async () => {
-    if (!role) { toast.error("Enter a role"); return; }
-    setLoading(true); setOutput("");
-    try {
-      const result = await recordAI({
-        systemPrompt: "You are a salary analyst. Provide realistic salary ranges based on role, location, and experience. Include entry, mid, senior levels.",
-        userPrompt: `Provide salary insights for: Role: ${role}, Location: ${location || "Global"}. Include: salary range (entry/mid/senior), benefits typically offered, negotiation tips, and market demand outlook.`,
-        maxTokens: 1500, taskCategory: "document",
-      });
-      setOutput(result.text);
-    } catch (e: any) { toast.error(e?.message || "Failed"); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div><h1 className="font-display text-2xl font-bold flex items-center gap-2"><Icon name="DollarSign" className="w-6 h-6 text-brand" /> Salary Insights</h1><p className="text-sm text-muted-foreground mt-1">Get AI-powered salary data for any role and location.</p></div>
-      <Card><CardContent className="p-4 space-y-3">
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div><Label>Role</Label><Input value={role} onChange={(e) => setRole(e.target.value)} placeholder="Senior Frontend Engineer" className="mt-1" /></div>
-          <div><Label>Location</Label><Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Dubai, UAE" className="mt-1" /></div>
-        </div>
-        <Button onClick={analyze} disabled={loading} className="bg-brand hover:bg-brand-dark text-white gap-2"><Icon name={loading ? "Loader2" : "Search"} className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> {loading ? "Analyzing..." : "Get Salary Insights"}</Button>
-      </CardContent></Card>
-      <AIOutput output={output} loading={loading} />
-    </div>
-  );
+  return <MarketSalaryInsights />;
 }
 
 // ============================================================================
@@ -1680,29 +1691,7 @@ If you don't know specific information, use "Information not available" — neve
 // ============================================================================
 
 export function JobAlerts() {
-  const [keywords, setKeywords] = useState("");
-  const [alerts, setAlerts] = useState<Array<{ id: string; keywords: string; created: string }>>([]);
-
-  const create = () => {
-    if (!keywords.trim()) return;
-    setAlerts((a) => [{ id: uid("alert"), keywords, created: new Date().toISOString() }, ...a]);
-    setKeywords(""); toast.success("Alert created — you'll be notified of matching jobs");
-  };
-
-  return (
-    <div className="space-y-6">
-      <div><h1 className="font-display text-2xl font-bold flex items-center gap-2"><Icon name="Bell" className="w-6 h-6 text-brand" /> Job Alerts</h1><p className="text-sm text-muted-foreground mt-1">Create keyword-based alerts and get notified when matching jobs are posted.</p></div>
-      <Card><CardContent className="p-4 space-y-3">
-        <div><Label>Alert Keywords</Label><Input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="Cabin Crew, Dubai, Emirates" className="mt-1" /></div>
-        <Button onClick={create} className="bg-brand hover:bg-brand-dark text-white gap-2"><Icon name="Bell" className="w-4 h-4" /> Create Alert</Button>
-      </CardContent></Card>
-      {alerts.length > 0 && (
-        <Card><CardHeader><CardTitle className="text-base">Active Alerts ({alerts.length})</CardTitle></CardHeader><CardContent><div className="space-y-2">{alerts.map((a) => (
-          <div key={a.id} className="flex items-center justify-between p-2 rounded-lg border border-border"><div><div className="text-sm font-medium">{a.keywords}</div><div className="text-xs text-muted-foreground">{new Date(a.created).toLocaleString()}</div></div><Button size="sm" variant="ghost" onClick={() => setAlerts((al) => al.filter((x) => x.id !== a.id))} className="text-destructive"><Icon name="Trash2" className="w-3.5 h-3.5" /></Button></div>
-        ))}</div></CardContent></Card>
-      )}
-    </div>
-  );
+  return <JobAlertsManager />;
 }
 
 // ============================================================================

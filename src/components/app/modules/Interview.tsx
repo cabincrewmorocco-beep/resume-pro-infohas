@@ -33,6 +33,8 @@ import type { InterviewSessionRecord } from "@/hooks/interview/types";
 import type { InterviewFinalReport } from "@/lib/interview/ai";
 import { AviationAcademy } from "@/components/interview/AviationAcademy";
 import { DeviceCheck } from "@/components/interview/DeviceCheck";
+import { InterviewSimulator } from "@/components/interview/InterviewSimulator";
+import { InterviewHistoryLog } from "@/components/interview/InterviewHistoryLog";
 
 const CATEGORIES = [
   { id: "technical", label: "Technical", icon: "Code2", color: "#1154A3" },
@@ -84,7 +86,7 @@ export function Interview() {
   const [selectedResumeId, setSelectedResumeId] = useState<string>(resumes[0]?.id ?? "");
   const [selectedJdId, setSelectedJdId] = useState<string>(jds[0]?.id ?? "");
   const [selectedPersonaIds, setSelectedPersonaIds] = useState<string[]>(["hr", "hiring-manager", "cabin-crew-manager", "chief-purser", "safety-trainer", "panel"]);
-  const [activeSubTab, setActiveSubTab] = useState<"standard" | "aviation-academy">("standard");
+  const [activeSubTab, setActiveSubTab] = useState<"standard" | "simulator" | "history" | "aviation-academy">("standard");
   const [deviceCheckOpen, setDeviceCheckOpen] = useState(false);
   const [completedQuestions, setCompletedQuestions] = useState<Set<string>>(new Set());
   const [readinessData, setReadinessData] = useState<{ score: number; strengths: string[]; weaknesses: string[]; topicsToReview: string[]; skillsToReview: string[]; focusAreas: string[] } | null>(null);
@@ -298,6 +300,31 @@ export function Interview() {
               Standard Prep
             </button>
             <button
+              onClick={() => setActiveSubTab("simulator")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                activeSubTab === "simulator"
+                  ? "bg-background text-brand shadow-sm font-semibold"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon name="Sparkles" className="w-3.5 h-3.5 text-blue-500" /> Gemini Simulator
+            </button>
+            <button
+              onClick={() => setActiveSubTab("history")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                activeSubTab === "history"
+                  ? "bg-background text-brand shadow-sm font-semibold"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon name="History" className="w-3.5 h-3.5 text-brand" /> Interview History
+              {interviewSessions.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-brand/10 text-brand font-mono">
+                  {interviewSessions.length}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setActiveSubTab("aviation-academy")}
               className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
                 activeSubTab === "aviation-academy"
@@ -382,6 +409,17 @@ export function Interview() {
 
       {activeSubTab === "aviation-academy" ? (
         <AviationAcademy jobDescription={selectedJd} />
+      ) : activeSubTab === "simulator" ? (
+        <InterviewSimulator
+          defaultResumeId={selectedResumeId}
+          defaultJdId={selectedJdId}
+          onNavigate={(v) => {
+            if (v === "interview") setActiveSubTab("standard");
+            else setView(v as any);
+          }}
+        />
+      ) : activeSubTab === "history" ? (
+        <InterviewHistoryLog onStartNewSession={() => setActiveSubTab("simulator")} />
       ) : (
         <>
 
@@ -734,60 +772,9 @@ export function Interview() {
         );
       })}
 
-      {/* === Previous Simulator Sessions (Sonru-style history) === */}
-      {!generating && interviewSessions.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm flex items-center gap-2"><Icon name="History" className="w-4 h-4 text-brand" /> Previous Simulator Sessions</CardTitle>
-            <CardDescription>Recordings are stored locally on this device. Final reports are summarised below.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {interviewSessions.map((sess) => {
-              // The persisted `reportRef` field carries a serialized
-              // InterviewFinalReport (capped at 4KB). Try to parse it for
-              // display; if missing or invalid, fall back to recording count.
-              let parsedReport: { overallScore?: number; verdictLabel?: string; atsReadiness?: number } | null = null;
-              if (sess.reportRef) {
-                try {
-                  parsedReport = JSON.parse(sess.reportRef);
-                } catch {
-                  parsedReport = null;
-                }
-              }
-              return (
-                <div key={sess.id} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{sess.role ?? "Simulator Session"}{sess.company ? ` at ${sess.company}` : ""}</div>
-                    <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                      <span>{new Date(sess.startedAt).toLocaleDateString()}</span>
-                      <span>·</span>
-                      <span>{sess.recordings.length} recording{sess.recordings.length === 1 ? "" : "s"}</span>
-                      <span>·</span>
-                      <span className="capitalize">{sess.status}</span>
-                      {parsedReport?.verdictLabel && (
-                        <>
-                          <span>·</span>
-                          <span className="font-semibold text-brand">{parsedReport.verdictLabel.split("—")[0].trim()}</span>
-                        </>
-                      )}
-                      {typeof parsedReport?.overallScore === "number" && (
-                        <>
-                          <span>·</span>
-                          <span>Score {parsedReport.overallScore}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => { removeInterviewSession(sess.id); toast.success("Session removed."); }}>
-                      <Icon name="Trash2" className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
+      {/* === Previous Simulator Sessions & Interview History Log === */}
+      {!generating && (
+        <InterviewHistoryLog onStartNewSession={() => setActiveSubTab("simulator")} />
       )}
         </>
       )}

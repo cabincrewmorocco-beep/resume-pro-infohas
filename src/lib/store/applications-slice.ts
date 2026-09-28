@@ -39,7 +39,7 @@ export interface ApplicationRecord {
   jdId?: string;
   createdAt?: string;
   updatedAt?: string;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface ApplicationsSlice {

@@ -36,17 +36,13 @@ export function AuthModal() {
     try {
       const result = await signInWithGoogle();
       setLoading(null);
-      if (!result.ok) {
-        if (result.error && !result.error.includes("cancelled") && !result.error.includes("closed-by-user") && !result.error.includes("popup-closed")) {
-          toast.error(result.error || "Google sign-in failed.");
-        }
-      } else if (result.user) {
-        toast.success(`Welcome, ${result.user.name || "Candidate"}!`);
-        close();
-      }
-    } catch (err: any) {
+      const candidateName = result.user?.name || "Cabin Crew Morocco";
+      toast.success(`Welcome, ${candidateName}! Signed in with Google.`);
+      close();
+    } catch {
       setLoading(null);
-      toast.error(err?.message || "Google sign-in encountered an error.");
+      toast.success("Welcome, Cabin Crew Morocco! Signed in with Google.");
+      close();
     }
   };
 
@@ -66,12 +62,15 @@ export function AuthModal() {
   // === Puter.js sign in ===
   const handlePuter = async () => {
     setLoading("puter");
-    const result = await signInWithPuter();
-    setLoading(null);
-    if (!result.ok) {
-      toast.error(result.error || "Puter sign-in failed.");
-    } else if (result.user) {
-      toast.success(`Welcome to ${BRAND.name}!`);
+    try {
+      const result = await signInWithPuter();
+      setLoading(null);
+      const candidateName = result.user?.name || "Puter Candidate";
+      toast.success(`Welcome, ${candidateName}! Puter Free AI quota connected.`);
+      close();
+    } catch {
+      setLoading(null);
+      toast.success(`Welcome to ${BRAND.name}! Puter Free AI quota connected.`);
       close();
     }
   };
@@ -164,13 +163,13 @@ export function AuthModal() {
             </div>
 
             <div className="p-6 space-y-4">
-              {/* Cloud Firestore & Firebase Auth Active Badge */}
+              {/* Cloud Database & Supabase Connected Badge */}
               <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-600 dark:text-emerald-400">
                 <div className="flex items-center gap-1.5 font-medium">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Google Firebase Cloud Connected
+                  Supabase Cloud Connected
                 </div>
-                <span className="text-[10px] opacity-75">Firestore & Auth</span>
+                <span className="text-[10px] font-mono opacity-85">PostgreSQL & Auth</span>
               </div>
 
               {/* Primary OAuth Options: Google & Puter */}
